@@ -1,0 +1,15 @@
+[Unit]
+Description=KIS Auto Trader & Streamlit Control Service
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/KIS_Auto2
+ExecStart=/home/ubuntu/KIS_Auto2/venv/bin/streamlit run app.py --server.port 8501 --server.address 0.0.0.0 --server.headless true
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,23 @@
+# Python & Virtual Environment
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+
+# Sensitive Information & Credentials (CRITICAL)
+.env
+.env.local
+token_*.json
+token_kis_*.json
+
+# Logs & Runtime Cache
+*.log
+proposals.json
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
