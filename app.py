@@ -7,6 +7,7 @@ import time
 import datetime
 import pandas as pd
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
@@ -14,6 +15,7 @@ import config
 from kis_api import KISApiClient
 from screener import StockScreener
 from scheduler import start_scheduler
+from telegram_notifier import notifier
 
 # 페이지 기본 설정
 st.set_page_config(
@@ -351,6 +353,15 @@ elif st.session_state["nav_page"] == "screener":
                             )
                             if res.get("rt_cd") == "0":
                                 st.success(f"✅ 주문 완료 (No. {res.get('order_no')})")
+                                # 텔레그램 매수 성공 알림 전송
+                                notifier.send_buy_success(
+                                    name=item["name"],
+                                    code=item["code"],
+                                    qty=order_qty,
+                                    price=target_price,
+                                    order_no=res.get("order_no", ""),
+                                    order_type=ord_type
+                                )
                                 time.sleep(1.5)
                                 st.rerun()
                             else:
@@ -433,6 +444,54 @@ elif st.session_state["nav_page"] == "screener":
 elif st.session_state["nav_page"] == "portfolio":
     st.title("💼 Portfolio & Risk • 보유 종목 및 매도 진단")
 
+    # 실시간 감지 / 즉시 체크 버튼
+    col_btn1, col_btn2 = st.columns(2)
+    with col_btn1:
+        realtime_on = st.toggle(
+            "🔄 실시간 감지 (5분 간격)",
+            value=st.session_state.get("realtime_detect_on", False),
+            key="realtime_detect_toggle"
+        )
+    with col_btn2:
+        if st.button("⚡ 즉시 체크", key="btn_immediate_check", use_container_width=True):
+            with st.spinner("보유 주식 매도 신호 즉시 분석 중..."):
+                updated = screener.check_sell_signals_now()
+                st.session_state["last_check_time"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                st.success(f"✅ 매도 신호 재분석 완료: {len(updated.get('sell_proposals', []))}건 감지")
+                time.sleep(1)
+                st.rerun()
+
+    # 실시간 감지 상태 표시
+    if realtime_on:
+        st.session_state["realtime_detect_on"] = True
+        st.info("🔄 실시간 감지가 활성화되었습니다. 5분마다 보유 주식 매도 신호를 자동 체크합니다.")
+        # 60초마다 페이지 자동 새로고침 (5분 주기 체크를 위한 트리거)
+        st_autorefresh(interval=60000, key="realtime_autorefresh")
+        # 5분(300초) 간격 자동 체크
+        last_check = st.session_state.get("last_realtime_check", 0.0)
+        now_ts = time.time()
+        if now_ts - last_check >= 300:
+            st.session_state["last_realtime_check"] = now_ts
+            with st.spinner("🔄 5분 주기 매도 신호 자동 체크 중..."):
+                updated = screener.check_sell_signals_now()
+                st.session_state["last_check_time"] = datetime.datetime.now().strftime("%H:%M:%S")
+                st.success(f"🔄 자동 체크 완료: {len(updated.get('sell_proposals', []))}건의 매도 신호 감지")
+                time.sleep(1)
+                st.rerun()
+        else:
+            # 다음 체크까지 남은 시간 계산
+            remaining = int(300 - (now_ts - last_check))
+            st.caption(f"⏳ 다음 자동 체크까지 약 {remaining}초 남음")
+    else:
+        st.session_state["realtime_detect_on"] = False
+
+    # 마지막 체크 시간 표시
+    last_check_time = st.session_state.get("last_check_time")
+    if last_check_time:
+        st.caption(f"⏰ 마지막 매도 신호 체크: {last_check_time}")
+
+    st.divider()
+
     # 매도 추천 긴급/주의 종목
     sell_list = proposals.get("sell_proposals", [])
     if sell_list:
@@ -495,6 +554,15 @@ elif st.session_state["nav_page"] == "portfolio":
                             )
                             if res.get("rt_cd") == "0":
                                 st.success(f"✅ 매도 완료 (No. {res.get('order_no')})")
+                                # 텔레그램 매도 성공 알림 전송
+                                notifier.send_sell_success(
+                                    name=s_item["name"],
+                                    code=s_item["code"],
+                                    qty=sell_qty,
+                                    price=sell_target_price,
+                                    order_no=res.get("order_no", ""),
+                                    order_type=sell_ord_type
+                                )
                                 time.sleep(1.5)
                                 st.rerun()
                             else:

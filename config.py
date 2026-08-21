@@ -37,6 +37,10 @@ CANO = os.getenv("KIS_CANO", "")
 ACNT_PRDT_CD = os.getenv("KIS_ACNT_PRDT_CD", "01")
 ACCOUNT_PWD = os.getenv("KIS_ACCOUNT_PWD", "")
 
+# 텔레그램 알림 설정
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+
 # API 엔드포인트 URL
 URL_BASE_MOCK = "https://openapivts.koreainvestment.com:29443"
 URL_BASE_REAL = "https://openapi.koreainvestment.com:9443"

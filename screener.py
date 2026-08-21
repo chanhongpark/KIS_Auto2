@@ -12,6 +12,7 @@ import numpy as np
 
 import config
 from kis_api import KISApiClient
+from telegram_notifier import notifier
 
 PROPOSALS_FILE = os.path.join(os.path.dirname(__file__), "proposals.json")
 
@@ -58,6 +59,32 @@ class StockScreener:
     def evaluate_buy_signals(self, code: str, name: str) -> Optional[Dict[str, Any]]:
         """개별 종목의 매수 타당성 및 점수 분석"""
         candles = self.api.get_daily_chart(code, count=60)
+        # 실시간 현재가를 조회하여 일봉 데이터에 반영 (현시점 기준 판단)
+        realtime = self.api.get_stock_price(code)
+        if realtime.get("rt_cd") == "0" and realtime.get("price", 0) > 0:
+            today = datetime.date.today().strftime("%Y%m%d")
+            # 일봉 데이터의 마지막 날짜가 오늘이 아니면 실시간 캔들 추가
+            if not candles or candles[-1].get("date") != today:
+                candles.append({
+                    "date": today,
+                    "close": realtime["price"],
+                    "open": realtime.get("stck_oprc", realtime["price"]),
+                    "high": realtime.get("stck_hgpr", realtime["price"]),
+                    "low": realtime.get("stck_lwpr", realtime["price"]),
+                    "volume": realtime.get("acml_vol", 0),
+                    "change_rate": realtime.get("prdy_ctrt", 0.0)
+                })
+            else:
+                # 오늘 데이터가 이미 있으면 실시간 값으로 갱신
+                candles[-1].update({
+                    "close": realtime["price"],
+                    "open": realtime.get("stck_oprc", candles[-1].get("open", realtime["price"])),
+                    "high": realtime.get("stck_hgpr", candles[-1].get("high", realtime["price"])),
+                    "low": realtime.get("stck_lwpr", candles[-1].get("low", realtime["price"])),
+                    "volume": realtime.get("acml_vol", candles[-1].get("volume", 0)),
+                    "change_rate": realtime.get("prdy_ctrt", candles[-1].get("change_rate", 0.0))
+                })
+
         df = self.calculate_technical_indicators(candles)
         if df is None or len(df) < 20:
             return None
@@ -146,6 +173,30 @@ class StockScreener:
 
         # 3. 기술적 데드크로스 분석
         candles = self.api.get_daily_chart(code, count=30)
+        # 실시간 현재가를 조회하여 일봉 데이터에 반영 (현시점 기준 판단)
+        realtime = self.api.get_stock_price(code)
+        if realtime.get("rt_cd") == "0" and realtime.get("price", 0) > 0:
+            today = datetime.date.today().strftime("%Y%m%d")
+            if not candles or candles[-1].get("date") != today:
+                candles.append({
+                    "date": today,
+                    "close": realtime["price"],
+                    "open": realtime.get("stck_oprc", realtime["price"]),
+                    "high": realtime.get("stck_hgpr", realtime["price"]),
+                    "low": realtime.get("stck_lwpr", realtime["price"]),
+                    "volume": realtime.get("acml_vol", 0),
+                    "change_rate": realtime.get("prdy_ctrt", 0.0)
+                })
+            else:
+                candles[-1].update({
+                    "close": realtime["price"],
+                    "open": realtime.get("stck_oprc", candles[-1].get("open", realtime["price"])),
+                    "high": realtime.get("stck_hgpr", candles[-1].get("high", realtime["price"])),
+                    "low": realtime.get("stck_lwpr", candles[-1].get("low", realtime["price"])),
+                    "volume": realtime.get("acml_vol", candles[-1].get("volume", 0)),
+                    "change_rate": realtime.get("prdy_ctrt", candles[-1].get("change_rate", 0.0))
+                })
+
         df = self.calculate_technical_indicators(candles)
         if df is not None and len(df) >= 20:
             last = df.iloc[-1]
@@ -214,7 +265,71 @@ class StockScreener:
 
         self.save_proposals(proposals_data)
         self.logger.info(f"스크리닝 완료: 매수 추천 {len(top_buy_proposals)}건, 매도 추천 {len(sell_proposals)}건")
+
+        # 텔레그램 매도 추천 알림 전송
+        self._notify_sell_recommendations(sell_proposals)
+
         return proposals_data
+
+    def check_sell_signals_now(self) -> Dict[str, Any]:
+        """현재 보유 주식에 대한 매도 추천을 즉시 재분석하여 결과 업데이트"""
+        self.logger.info("=== 보유 주식 매도 신호 즉시 재분석 시작 ===")
+
+        # 기존 제안서 로드 (매수 추천 유지)
+        existing = self.load_proposals()
+        buy_proposals = existing.get("buy_proposals", [])
+
+        # 현재 보유 주식 매도 추천 분석
+        balance = self.api.get_account_balance()
+        holdings = balance.get("holdings", [])
+        sell_proposals = []
+        for holding in holdings:
+            try:
+                sell_res = self.evaluate_sell_signals(holding)
+                if sell_res:
+                    sell_proposals.append(sell_res)
+            except Exception as e:
+                self.logger.warning(f"[{holding.get('name')}] 매도 분석 예외: {e}")
+
+        # 결과 저장 (매수 추천은 기존 값 유지)
+        proposals_data = {
+            "generated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "buy_proposals": buy_proposals,
+            "sell_proposals": sell_proposals,
+            "holdings_count": len(holdings),
+            "status": "READY"
+        }
+
+        self.save_proposals(proposals_data)
+        self.logger.info(f"매도 신호 재분석 완료: 매도 추천 {len(sell_proposals)}건")
+
+        # 텔레그램 매도 추천 알림 전송
+        self._notify_sell_recommendations(sell_proposals)
+
+        return proposals_data
+
+    def _notify_sell_recommendations(self, sell_proposals: List[Dict[str, Any]]) -> None:
+        """
+        매도 추천 종목이 감지되면 텔레그램으로 알림 전송
+        """
+        if not sell_proposals:
+            return
+
+        for sell_item in sell_proposals:
+            try:
+                notifier.send_sell_recommendation(
+                    name=sell_item.get("name", ""),
+                    code=sell_item.get("code", ""),
+                    holding_qty=int(sell_item.get("holding_qty", 0)),
+                    avg_buy_price=float(sell_item.get("avg_buy_price", 0)),
+                    current_price=float(sell_item.get("current_price", 0)),
+                    profit_rate=float(sell_item.get("profit_rate", 0)),
+                    profit_loss=float(sell_item.get("profit_loss", 0)),
+                    reasons=sell_item.get("reasons", []),
+                    is_urgent=bool(sell_item.get("is_urgent", False))
+                )
+            except Exception as e:
+                self.logger.warning(f"[{sell_item.get('name')}] 텔레그램 매도 알림 전송 실패: {e}")
 
     def save_proposals(self, data: dict) -> bool:
         try:

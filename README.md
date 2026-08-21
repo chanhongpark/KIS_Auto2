@@ -26,6 +26,10 @@
   3. `💼 Portfolio & Risk • 매도 진단`: 보유 주식 현황 및 매도 시그널 감지 원클릭 매도
   4. `⚡ Execution • 주문/체결`: 실시간 접수 및 체결 내역 조회
   5. `⚙️ Settings • 시스템 설정`: 모의/실전 전환, 파라미터 튜닝, 100개 종목 Watchlist 실시간 편집
+- 📱 **텔레그램 실시간 알림**:
+  - 매수 주문 성공 시 즉시 텔레그램 알림 전송
+  - 보유 종목 매도 추천(익절/손절/데드크로스/RSI 과열) 발생 시 텔레그램 알림 전송
+  - 매도 주문 성공 시 텔레그램 알림 전송
 - ☁️ **AWS EC2 24시간 무중단 백그라운드 운용 (systemd 지원)**
 
 ---
@@ -39,6 +43,7 @@ KIS_Auto2/
 ├── screener.py             # 100종목 퀀트 스크리닝 및 매수/매도 제안 엔진
 ├── scheduler.py            # 월~금 08:30 KST 백그라운드 크론 스케줄러
 ├── config.py               # 환경변수, 100개 종목 유니버스 및 런타임 설정 관리
+├── telegram_notifier.py    # 텔레그램 봇 알림 전송 모듈 (매수/매도/추천)
 ├── settings.json           # 동적 전략 파라미터 및 Watchlist
 ├── requirements.txt        # 의존성 패키지 목록
 ├── EC2_DEPLOYMENT.md       # AWS EC2 무중단 배포 가이드
@@ -73,6 +78,10 @@ KIS_APP_SECRET=your_app_secret
 KIS_CANO=your_8_digit_account_no
 KIS_ACNT_PRDT_CD=01
 KIS_ACCOUNT_PWD=your_account_password
+
+# 텔레그램 알림 (선택 사항 - 설정 시 매수/매도/추천 알림 수신)
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+TELEGRAM_CHAT_ID=your_telegram_chat_id
 ```
 
 ### 3. 대시보드 실행

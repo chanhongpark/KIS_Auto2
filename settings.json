@@ -1,11 +1,9 @@
 {
-  "mock_trading": true,
+  "mock_trading": false,
   "target_profit_rate": 0.05,
   "stop_loss_rate": -0.03,
   "max_buy_budget_per_stock": 500000,
-  "max_holding_stocks": 5,
   "premarket_time": "08:30",
-  "auto_execute_orders": false,
   "watchlist": [
     {
       "code": "005930",
