@@ -260,12 +260,26 @@ class KISApiClient:
             summary = {}
             if output2:
                 o2 = output2[0]
+                # 보유 주식 평가금 = 개별 보유 종목 평가금액(evlu_amt) 합계
+                # (evlu_amt_smtl은 예수금을 포함한 총평가금액이므로 주식 평가금으로 부적합)
+                stock_eval_amt = sum(h["eval_amount"] for h in holdings)
                 summary = {
                     "tot_asset": float(o2.get("tot_evlu_amt", 0)),
                     "cash_balance": float(o2.get("dnca_tot_amt", 0)),
-                    "stock_eval_amt": float(o2.get("evlu_amt_smtl", 0)),
+                    "stock_eval_amt": stock_eval_amt,
                     "total_profit_loss": float(o2.get("evlu_pfls_smtl_amt", 0)),
                     "net_asset": float(o2.get("nass_amt", 0))
+                }
+            elif holdings:
+                # output2가 없지만 보유 종목이 있는 경우: 보유 종목 평가금 합계로 계산
+                stock_eval_amt = sum(h["eval_amount"] for h in holdings)
+                total_profit_loss = sum(h["profit_loss"] for h in holdings)
+                summary = {
+                    "tot_asset": stock_eval_amt,
+                    "cash_balance": 0,
+                    "stock_eval_amt": stock_eval_amt,
+                    "total_profit_loss": total_profit_loss,
+                    "net_asset": stock_eval_amt
                 }
 
             return {
