@@ -1,5 +1,6 @@
 {
   "mock_trading": false,
+  "telegram_enabled": false,
   "target_profit_rate": 0.05,
   "stop_loss_rate": -0.03,
   "max_buy_budget_per_stock": 500000,

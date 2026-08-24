@@ -36,6 +36,11 @@ class TelegramNotifier:
         Returns:
             bool: 전송 성공 여부
         """
+        # 설정에서 텔레그램 알림 활성화 여부 확인
+        if not config.get_setting("telegram_enabled", False):
+            logger.info("텔레그램 알림이 비활성화되어 있습니다. (설정 > 텔레그램 알림 활성화 필요)")
+            return False
+
         if not self.is_enabled:
             logger.warning("텔레그램 봇 토큰 또는 채팅 ID가 설정되지 않아 알림을 전송하지 않습니다.")
             return False
@@ -62,8 +67,16 @@ class TelegramNotifier:
                 logger.info("텔레그램 알림 전송 성공")
                 return True
             else:
-                logger.error(f"텔레그램 알림 전송 실패: {data.get('description', '알 수 없는 오류')}")
+                logger.error(f"텔레그램 알림 전송 실패: HTTP {resp.status_code} - {data.get('description', '알 수 없는 오류')}")
                 return False
+        except requests.exceptions.SSLError as e:
+            logger.error(f"텔레그램 SSL 인증 오류 (네트워크/방화벽 문제 가능): {e}")
+            logger.error("LG 사내 네트워크에서 api.telegram.org 접속이 차단될 수 있습니다. VPN 또는 외부 네트워크에서 실행해 주세요.")
+            return False
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"텔레그램 연결 실패 (네트워크 차단 가능): {e}")
+            logger.error("LG 사내 네트워크에서 api.telegram.org 접속이 차단될 수 있습니다. VPN 또는 외부 네트워크에서 실행해 주세요.")
+            return False
         except Exception as e:
             logger.error(f"텔레그램 알림 전송 중 예외 발생: {e}")
             return False
@@ -247,6 +260,17 @@ class TelegramNotifier:
         text += "━━━━━━━━━━━━━━━━━━\n"
         text += f"⏰ {self._now_str()}"
 
+        return self.send_message(text)
+
+    def send_test_message(self) -> bool:
+        """테스트 메시지 전송 (연결 확인용)"""
+        text = (
+            "✅ <b>텔레그램 알림 테스트</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "KIS Auto Trader 시스템에서 보낸 테스트 메시지입니다.\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            f"⏰ {self._now_str()}"
+        )
         return self.send_message(text)
 
     @staticmethod

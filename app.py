@@ -606,6 +606,11 @@ elif st.session_state["nav_page"] == "settings":
     
     with st.form("settings_form_page"):
         f_mock = st.toggle("모의투자 모드 활성화 (체크 해제 시 실전투자)", value=config.CURRENT_SETTINGS.get("mock_trading", True))
+        f_telegram = st.toggle("텔레그램 알림 활성화 (기본: OFF)", value=config.CURRENT_SETTINGS.get("telegram_enabled", False))
+        if f_telegram:
+            st.caption("⚠️ 텔레그램 알림을 활성화하면 매수/매도 이벤트가 텔레그램으로 전송됩니다. api.telegram.org에 접속 가능해야 합니다.")
+        else:
+            st.caption("텔레그램 알림이 꺼져 있습니다. 켜려면 위 토글을 활성화하세요.")
         
         c_p1, c_p2 = st.columns(2)
         with c_p1:
@@ -660,6 +665,7 @@ elif st.session_state["nav_page"] == "settings":
 
             new_settings = {
                 "mock_trading": f_mock,
+                "telegram_enabled": f_telegram,
                 "target_profit_rate": f_profit,
                 "stop_loss_rate": f_loss,
                 "max_buy_budget_per_stock": f_budget,

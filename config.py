@@ -57,6 +57,7 @@ DEFAULT_SETTINGS = {
     "max_holding_stocks": 5,                # 최대 보유 종목 수
     "premarket_time": "08:30",              # 개장 전 자동 스크리닝 시각 (KST)
     "auto_execute_orders": False,           # 주문 완전 자동화 여부 (False: UI 원클릭 승인)
+    "telegram_enabled": False,              # 텔레그램 알림 활성화 여부 (기본: OFF)
     "watchlist": [
         {"code": "005930", "name": "삼성전자", "market": "KOSPI"},
         {"code": "000660", "name": "SK하이닉스", "market": "KOSPI"},
