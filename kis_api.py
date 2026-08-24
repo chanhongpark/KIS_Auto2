@@ -12,6 +12,7 @@ from typing import Dict, Any, List, Optional
 import pandas as pd
 
 import config
+from time_utils import now, today
 
 class KISApiClient:
     def __init__(self):
@@ -74,7 +75,7 @@ class KISApiClient:
         if not self.access_token or not self.token_expired_at:
             return False
         # 만료 10분 전이면 재발급
-        return datetime.datetime.now() < (self.token_expired_at - datetime.timedelta(minutes=10))
+        return now() < (self.token_expired_at - datetime.timedelta(minutes=10))
 
     def get_access_token(self) -> bool:
         """OAuth2 Access Token 발급"""
@@ -96,7 +97,7 @@ class KISApiClient:
                 data = res.json()
                 self.access_token = data.get("access_token")
                 expires_in = int(data.get("expires_in", 86400))
-                self.token_expired_at = datetime.datetime.now() + datetime.timedelta(seconds=expires_in)
+                self.token_expired_at = now() + datetime.timedelta(seconds=expires_in)
                 self._save_token_file()
                 self.logger.info(f"[{'모의' if self.is_mock else '실전'}] 토큰 발급 성공 (만료: {self.token_expired_at})")
                 return True
@@ -177,8 +178,8 @@ class KISApiClient:
 
     def get_daily_chart(self, stock_code: str, period: str = "D", count: int = 60) -> List[Dict[str, Any]]:
         """일별 차트/시세 데이터 조회 (OHLCV)"""
-        end_date = datetime.date.today().strftime("%Y%m%d")
-        start_date = (datetime.date.today() - datetime.timedelta(days=count * 2)).strftime("%Y%m%d")
+        end_date = today().strftime("%Y%m%d")
+        start_date = (today() - datetime.timedelta(days=count * 2)).strftime("%Y%m%d")
 
         url = f"{self.url_base}/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
         headers = self._get_headers("FHKST03010100")
@@ -330,12 +331,12 @@ class KISApiClient:
         url = f"{self.url_base}/uapi/domestic-stock/v1/trading/inquire-daily-ccld"
         tr_id = "VTTC8001R" if self.is_mock else "TTTC8001R"
         headers = self._get_headers(tr_id)
-        today = datetime.date.today().strftime("%Y%m%d")
+        today_str = today().strftime("%Y%m%d")
         params = {
             "CANO": self.cano,
             "ACNT_PRDT_CD": self.acnt_prdt_cd,
-            "INQR_STRT_DT": today,
-            "INQR_END_DT": today,
+            "INQR_STRT_DT": today_str,
+            "INQR_END_DT": today_str,
             "SLL_BUY_DVSN_CD": "00",
             "INQR_DVSN": "00",
             "PDNO": "",

@@ -3,6 +3,9 @@ echo "=== Starting KIS Auto Trader on EC2 ==="
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
+# 한국 표준시(KST) 강제 설정
+export TZ=Asia/Seoul
+
 if [ ! -d "venv" ]; then
     echo "Creating python virtualenv..."
     python3 -m venv venv

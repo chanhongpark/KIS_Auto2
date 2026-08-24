@@ -6,12 +6,24 @@ import os
 import json
 import logging
 
-# 로깅 기본 설정
+# 로깅 기본 설정 (KST 기준)
+class KSTFormatter(logging.Formatter):
+    """한국 표준시(KST) 기준으로 로그 타임스탬프를 출력하는 Formatter"""
+    def formatTime(self, record, datefmt=None):
+        from time_utils import now
+        dt = now()
+        if datefmt:
+            return dt.strftime(datefmt)
+        return dt.strftime('%Y-%m-%d %H:%M:%S')
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] (%(name)s) %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
+# 루트 로거에 KST Formatter 적용
+for handler in logging.getLogger().handlers:
+    handler.setFormatter(KSTFormatter(fmt='%(asctime)s [%(levelname)s] (%(name)s) %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
 logger = logging.getLogger("Config")
 
 # .env 로드

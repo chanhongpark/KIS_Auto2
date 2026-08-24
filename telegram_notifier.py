@@ -276,8 +276,8 @@ class TelegramNotifier:
     @staticmethod
     def _now_str() -> str:
         """현재 시각 문자열 반환 (KST)"""
-        import datetime
-        return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        from time_utils import now_str
+        return now_str()
 
 
 # 모듈 레벨 싱글톤 인스턴스

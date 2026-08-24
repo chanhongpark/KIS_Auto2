@@ -43,6 +43,7 @@ KIS_Auto2/
 ├── screener.py             # 100종목 퀀트 스크리닝 및 매수/매도 제안 엔진
 ├── scheduler.py            # 월~금 08:30 KST 백그라운드 크론 스케줄러
 ├── config.py               # 환경변수, 100개 종목 유니버스 및 런타임 설정 관리
+├── time_utils.py           # 한국 표준시(KST) 기준 시간 유틸리티 모듈
 ├── telegram_notifier.py    # 텔레그램 봇 알림 전송 모듈 (매수/매도/추천)
 ├── settings.json           # 동적 전략 파라미터 및 Watchlist
 ├── requirements.txt        # 의존성 패키지 목록

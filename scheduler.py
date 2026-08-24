@@ -12,6 +12,7 @@ import threading
 
 import config
 from screener import StockScreener
+from time_utils import now
 
 logger = logging.getLogger("Scheduler")
 
@@ -21,7 +22,7 @@ _worker_thread = None
 
 def job_premarket_screening():
     """개장 전 실행되는 정기 스크리닝 작업"""
-    logger.info(f"[정기 스케줄 실행] {datetime.datetime.now()} 개장 전 종목 스크리닝 시작")
+    logger.info(f"[정기 스케줄 실행] {now()} 개장 전 종목 스크리닝 시작")
     try:
         screener = StockScreener()
         proposals = screener.run_premarket_screening()
@@ -46,7 +47,7 @@ class SimpleFallbackScheduler:
     def _loop(self):
         last_run_day = None
         while self.running:
-            now = datetime.datetime.now()
+            now_dt = now()
             time_str = config.CURRENT_SETTINGS.get("premarket_time", "08:30")
             try:
                 target_h, target_m = map(int, time_str.split(":"))
@@ -54,9 +55,9 @@ class SimpleFallbackScheduler:
                 target_h, target_m = 8, 30
 
             # 월~금(0~4) 개장 전 시간 체크
-            if now.weekday() < 5:
-                if (now.hour == target_h and now.minute == target_m) and last_run_day != now.date():
-                    last_run_day = now.date()
+            if now_dt.weekday() < 5:
+                if (now_dt.hour == target_h and now_dt.minute == target_m) and last_run_day != now_dt.date():
+                    last_run_day = now_dt.date()
                     job_premarket_screening()
             time.sleep(30)
 

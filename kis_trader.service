@@ -10,6 +10,7 @@ ExecStart=/home/ubuntu/KIS_Auto2/venv/bin/streamlit run app.py --server.port 850
 Restart=always
 RestartSec=10
 Environment=PYTHONUNBUFFERED=1
+Environment=TZ=Asia/Seoul
 
 [Install]
 WantedBy=multi-user.target

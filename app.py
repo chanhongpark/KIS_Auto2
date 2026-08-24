@@ -4,7 +4,6 @@ KIS Auto Trader - Streamlit Control Center (Page Navigation)
 """
 import os
 import time
-import datetime
 import pandas as pd
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
@@ -16,6 +15,7 @@ from kis_api import KISApiClient
 from screener import StockScreener
 from scheduler import start_scheduler
 from telegram_notifier import notifier
+from time_utils import now_str
 
 # 페이지 기본 설정
 st.set_page_config(
@@ -228,7 +228,7 @@ proposals = screener.load_proposals()
 # ==============================================================================
 if st.session_state["nav_page"] == "overview":
     st.title("🏠 종합 자산 및 매매 모니터링")
-    st.caption(f"서버 시각: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (KST)")
+    st.caption(f"서버 시각: {now_str()} (KST)")
 
     # 상단 요약 카드
     col1, col2, col3, col4 = st.columns(4)
@@ -456,7 +456,7 @@ elif st.session_state["nav_page"] == "portfolio":
         if st.button("⚡ 즉시 체크", key="btn_immediate_check", use_container_width=True):
             with st.spinner("보유 주식 매도 신호 즉시 분석 중..."):
                 updated = screener.check_sell_signals_now()
-                st.session_state["last_check_time"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                st.session_state["last_check_time"] = now_str()
                 st.success(f"✅ 매도 신호 재분석 완료: {len(updated.get('sell_proposals', []))}건 감지")
                 time.sleep(1)
                 st.rerun()
@@ -474,14 +474,12 @@ elif st.session_state["nav_page"] == "portfolio":
             st.session_state["last_realtime_check"] = now_ts
             with st.spinner("🔄 5분 주기 매도 신호 자동 체크 중..."):
                 updated = screener.check_sell_signals_now()
-                st.session_state["last_check_time"] = datetime.datetime.now().strftime("%H:%M:%S")
+                st.session_state["last_check_time"] = now_str("%H:%M:%S")
                 st.success(f"🔄 자동 체크 완료: {len(updated.get('sell_proposals', []))}건의 매도 신호 감지")
                 time.sleep(1)
                 st.rerun()
         else:
-            # 다음 체크까지 남은 시간 계산
-            remaining = int(300 - (now_ts - last_check))
-            st.caption(f"⏳ 다음 자동 체크까지 약 {remaining}초 남음")
+            st.caption("⏳ 5분 주기로 자동 체크가 실행됩니다.")
     else:
         st.session_state["realtime_detect_on"] = False
 

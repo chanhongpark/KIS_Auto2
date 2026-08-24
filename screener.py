@@ -13,6 +13,7 @@ import numpy as np
 import config
 from kis_api import KISApiClient
 from telegram_notifier import notifier
+from time_utils import today, now_str
 
 PROPOSALS_FILE = os.path.join(os.path.dirname(__file__), "proposals.json")
 
@@ -62,11 +63,11 @@ class StockScreener:
         # 실시간 현재가를 조회하여 일봉 데이터에 반영 (현시점 기준 판단)
         realtime = self.api.get_stock_price(code)
         if realtime.get("rt_cd") == "0" and realtime.get("price", 0) > 0:
-            today = datetime.date.today().strftime("%Y%m%d")
+            today_str = today().strftime("%Y%m%d")
             # 일봉 데이터의 마지막 날짜가 오늘이 아니면 실시간 캔들 추가
-            if not candles or candles[-1].get("date") != today:
+            if not candles or candles[-1].get("date") != today_str:
                 candles.append({
-                    "date": today,
+                    "date": today_str,
                     "close": realtime["price"],
                     "open": realtime.get("stck_oprc", realtime["price"]),
                     "high": realtime.get("stck_hgpr", realtime["price"]),
@@ -176,10 +177,10 @@ class StockScreener:
         # 실시간 현재가를 조회하여 일봉 데이터에 반영 (현시점 기준 판단)
         realtime = self.api.get_stock_price(code)
         if realtime.get("rt_cd") == "0" and realtime.get("price", 0) > 0:
-            today = datetime.date.today().strftime("%Y%m%d")
-            if not candles or candles[-1].get("date") != today:
+            today_str = today().strftime("%Y%m%d")
+            if not candles or candles[-1].get("date") != today_str:
                 candles.append({
-                    "date": today,
+                    "date": today_str,
                     "close": realtime["price"],
                     "open": realtime.get("stck_oprc", realtime["price"]),
                     "high": realtime.get("stck_hgpr", realtime["price"]),
@@ -256,7 +257,7 @@ class StockScreener:
 
         # 결과 저장
         proposals_data = {
-            "generated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "generated_at": now_str(),
             "buy_proposals": top_buy_proposals,
             "sell_proposals": sell_proposals,
             "holdings_count": len(holdings),
@@ -293,7 +294,7 @@ class StockScreener:
 
         # 결과 저장 (매수 추천은 기존 값 유지)
         proposals_data = {
-            "generated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "generated_at": now_str(),
             "buy_proposals": buy_proposals,
             "sell_proposals": sell_proposals,
             "holdings_count": len(holdings),
