@@ -58,6 +58,9 @@ class KISApiClient:
                     exp_str = data.get("token_expired_at")
                     if exp_str:
                         self.token_expired_at = datetime.datetime.fromisoformat(exp_str)
+                        # 저장된 토큰이 timezone-naive인 경우 KST timezone 부여
+                        if self.token_expired_at.tzinfo is None:
+                            self.token_expired_at = self.token_expired_at.replace(tzinfo=datetime.timezone(datetime.timedelta(hours=9)))
             except Exception as e:
                 self.logger.warning(f"토큰 파일 로드 실패: {e}")
 
@@ -340,17 +343,23 @@ class KISApiClient:
             self.logger.error(f"주문 전송 실패: {e}")
             return {"rt_cd": "-1", "msg1": str(e)}
 
-    def get_order_history(self) -> List[Dict[str, Any]]:
-        """당일 주문 및 체결 내역 조회 (TTTC8001R / VTTC8001R)"""
+    def get_order_history(self, start_date: Optional[str] = None, end_date: Optional[str] = None) -> List[Dict[str, Any]]:
+        """주문 및 체결 내역 조회 (TTTC8001R / VTTC8001R)
+
+        Args:
+            start_date: 조회 시작일 (YYYYMMDD). 기본값: 오늘
+            end_date: 조회 종료일 (YYYYMMDD). 기본값: 오늘
+        """
         url = f"{self.url_base}/uapi/domestic-stock/v1/trading/inquire-daily-ccld"
         tr_id = "VTTC8001R" if self.is_mock else "TTTC8001R"
         headers = self._get_headers(tr_id)
-        today_str = today().strftime("%Y%m%d")
+        start_str = start_date or today().strftime("%Y%m%d")
+        end_str = end_date or today().strftime("%Y%m%d")
         params = {
             "CANO": self.cano,
             "ACNT_PRDT_CD": self.acnt_prdt_cd,
-            "INQR_STRT_DT": today_str,
-            "INQR_END_DT": today_str,
+            "INQR_STRT_DT": start_str,
+            "INQR_END_DT": end_str,
             "SLL_BUY_DVSN_CD": "00",
             "INQR_DVSN": "00",
             "PDNO": "",
@@ -379,9 +388,138 @@ class KISApiClient:
                     "ccld_qty": int(item.get("tot_ccld_qty", 0)),
                     "ccld_price": float(item.get("avg_prvs", 0)),
                     "order_time": item.get("ord_tmd"),
+                    "order_date": item.get("ord_dt", ""),
                     "status": "체결완료" if int(item.get("ord_qty", 0)) == int(item.get("tot_ccld_qty", 0)) and int(item.get("ord_qty", 0)) > 0 else "미체결/부분체결"
                 })
             return orders
         except Exception as e:
             self.logger.error(f"주문내역 조회 에러: {e}")
             return []
+
+    def get_trade_history_with_profit(self, start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, Any]:
+        """매수/매도 이력 조회 및 실현 손익 계산
+
+        Args:
+            start_date: 조회 시작일 (YYYYMMDD). 기본값: 오늘
+            end_date: 조회 종료일 (YYYYMMDD). 기본값: 오늘
+
+        Returns:
+            {
+                "orders": [...],           # 전체 주문/체결 내역
+                "realized_profit": float,  # 실현 손익 (매도 - 매수)
+                "buy_total": float,        # 총 매수 금액
+                "sell_total": float,       # 총 매도 금액
+                "buy_count": int,          # 매수 건수
+                "sell_count": int,         # 매도 건수
+                "profit_by_stock": {...}   # 종목별 실현 손익
+            }
+        """
+        orders = self.get_order_history(start_date, end_date)
+        if not orders:
+            return {
+                "orders": [],
+                "realized_profit": 0.0,
+                "buy_total": 0.0,
+                "sell_total": 0.0,
+                "buy_count": 0,
+                "sell_count": 0,
+                "profit_by_stock": {}
+            }
+
+        buy_total = 0.0
+        sell_total = 0.0
+        buy_count = 0
+        sell_count = 0
+        profit_by_stock = {}
+
+        for o in orders:
+            # 체결된 수량과 가격 기준으로 금액 계산
+            ccld_qty = o.get("ccld_qty", 0)
+            ccld_price = o.get("ccld_price", 0)
+            amount = ccld_qty * ccld_price
+
+            if o["buy_sell"] == "매수":
+                buy_total += amount
+                buy_count += 1
+            else:
+                sell_total += amount
+                sell_count += 1
+
+            # 종목별 실현 손익 집계
+            code = o["code"]
+            if code not in profit_by_stock:
+                profit_by_stock[code] = {
+                    "name": o["name"],
+                    "buy_amount": 0.0,
+                    "sell_amount": 0.0,
+                    "buy_qty": 0,
+                    "sell_qty": 0,
+                    "profit": 0.0
+                }
+            if o["buy_sell"] == "매수":
+                profit_by_stock[code]["buy_amount"] += amount
+                profit_by_stock[code]["buy_qty"] += ccld_qty
+            else:
+                profit_by_stock[code]["sell_amount"] += amount
+                profit_by_stock[code]["sell_qty"] += ccld_qty
+
+        # 종목별 실현 손익 계산 (매도 금액 - 매수 금액)
+        # 매도가 완료된 종목만 실현 손익에 포함
+        realized_profit = 0.0
+        realized_buy_total = 0.0
+        for code, data in profit_by_stock.items():
+            if data["sell_qty"] > 0:
+                data["profit"] = data["sell_amount"] - data["buy_amount"]
+                realized_profit += data["profit"]
+                realized_buy_total += data["buy_amount"]
+            else:
+                # 매도가 없는 종목은 실현 손익에서 제외
+                data["profit"] = 0.0
+
+        # 실현 손익 관련 총액 (매도 완료된 종목의 매수/매도 금액만)
+        realized_sell_total = sum(
+            data["sell_amount"] for data in profit_by_stock.values() if data["sell_qty"] > 0
+        )
+
+        return {
+            "orders": orders,
+            "realized_profit": realized_profit,
+            "buy_total": realized_buy_total,
+            "sell_total": realized_sell_total,
+            "buy_count": buy_count,
+            "sell_count": sell_count,
+            "profit_by_stock": profit_by_stock
+        }
+
+    def get_unrealized_profit(self) -> Dict[str, Any]:
+        """현재 보유 종목의 미실현 손익(평가손익) 계산
+
+        Returns:
+            {
+                "unrealized_profit": float,   # 총 미실현 손익
+                "unrealized_by_stock": {...}  # 종목별 미실현 손익
+            }
+        """
+        balance = self.get_account_balance()
+        holdings = balance.get("holdings", [])
+        unrealized_profit = 0.0
+        unrealized_by_stock = {}
+
+        for h in holdings:
+            code = h["code"]
+            profit = h.get("profit_loss", 0.0)
+            unrealized_profit += profit
+            unrealized_by_stock[code] = {
+                "name": h.get("name", ""),
+                "code": code,
+                "quantity": h.get("quantity", 0),
+                "avg_buy_price": h.get("avg_buy_price", 0),
+                "current_price": h.get("current_price", 0),
+                "profit_loss": profit,
+                "profit_rate": h.get("profit_rate", 0)
+            }
+
+        return {
+            "unrealized_profit": unrealized_profit,
+            "unrealized_by_stock": unrealized_by_stock
+        }
