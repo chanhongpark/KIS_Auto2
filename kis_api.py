@@ -426,13 +426,33 @@ class KISApiClient:
                 "profit_by_stock": {}
             }
 
+        # FIFO(선입선출) 정확성을 위해 주문을 시간순(오름차순)으로 정렬
+        # API가 반환하는 주문 순서는 보장되지 않으므로 반드시 정렬 필요
+        orders.sort(key=lambda o: (
+            o.get("order_date", "") or "",
+            o.get("order_time", "") or ""
+        ))
+
         buy_total = 0.0
         sell_total = 0.0
         buy_count = 0
         sell_count = 0
         profit_by_stock = {}
 
+        # 종목별 매수/매도 주문을 시간순으로 수집
+        # FIFO(선입선출) 방식으로 매도 주문을 매수 주문과 매칭하여 실현 손익 계산
+        stock_orders = {}  # code -> list of (buy_sell, qty, price)
+
         for o in orders:
+            code = o["code"]
+            if code not in stock_orders:
+                stock_orders[code] = []
+            stock_orders[code].append({
+                "buy_sell": o["buy_sell"],
+                "qty": o.get("ccld_qty", 0),
+                "price": o.get("ccld_price", 0)
+            })
+
             # 체결된 수량과 가격 기준으로 금액 계산
             ccld_qty = o.get("ccld_qty", 0)
             ccld_price = o.get("ccld_price", 0)
@@ -445,41 +465,70 @@ class KISApiClient:
                 sell_total += amount
                 sell_count += 1
 
-            # 종목별 실현 손익 집계
-            code = o["code"]
-            if code not in profit_by_stock:
+        # 종목별 실현 손익 집계 (FIFO 매칭)
+        realized_profit = 0.0
+        realized_buy_total = 0.0
+        realized_sell_total = 0.0
+        profit_by_stock = {}
+
+        for code, stock_orders_list in stock_orders.items():
+            # 종목 정보 (이름)
+            stock_name = ""
+            for o in orders:
+                if o["code"] == code:
+                    stock_name = o["name"]
+                    break
+
+            buy_queue = []  # 아직 매도되지 않은 매수 주문 큐 (FIFO)
+            sell_amount = 0.0
+            sell_qty = 0
+            buy_amount_matched = 0.0  # 매도된 수량에 대응하는 매수 금액
+            buy_qty_matched = 0
+
+            for so in stock_orders_list:
+                if so["buy_sell"] == "매수":
+                    # 매수 주문은 큐에 추가 (아직 매도되지 않은 포지션)
+                    buy_queue.append(so)
+                else:
+                    # 매도 주문: FIFO로 매수 주문과 매칭
+                    sell_qty_remaining = so["qty"]
+                    sell_amount += so["qty"] * so["price"]
+                    sell_qty += so["qty"]
+
+                    while sell_qty_remaining > 0 and buy_queue:
+                        buy_order = buy_queue[0]
+                        match_qty = min(buy_order["qty"], sell_qty_remaining)
+                        buy_amount_matched += match_qty * buy_order["price"]
+                        buy_qty_matched += match_qty
+                        sell_qty_remaining -= match_qty
+                        buy_order["qty"] -= match_qty
+                        if buy_order["qty"] <= 0:
+                            buy_queue.pop(0)
+
+            # 매도가 있는 종목만 실현 손익에 포함
+            if sell_qty > 0:
+                profit = sell_amount - buy_amount_matched
                 profit_by_stock[code] = {
-                    "name": o["name"],
+                    "name": stock_name,
+                    "buy_amount": buy_amount_matched,
+                    "sell_amount": sell_amount,
+                    "buy_qty": buy_qty_matched,
+                    "sell_qty": sell_qty,
+                    "profit": profit
+                }
+                realized_profit += profit
+                realized_buy_total += buy_amount_matched
+                realized_sell_total += sell_amount
+            else:
+                # 매도가 없는 종목은 실현 손익에서 제외
+                profit_by_stock[code] = {
+                    "name": stock_name,
                     "buy_amount": 0.0,
                     "sell_amount": 0.0,
                     "buy_qty": 0,
                     "sell_qty": 0,
                     "profit": 0.0
                 }
-            if o["buy_sell"] == "매수":
-                profit_by_stock[code]["buy_amount"] += amount
-                profit_by_stock[code]["buy_qty"] += ccld_qty
-            else:
-                profit_by_stock[code]["sell_amount"] += amount
-                profit_by_stock[code]["sell_qty"] += ccld_qty
-
-        # 종목별 실현 손익 계산 (매도 금액 - 매수 금액)
-        # 매도가 완료된 종목만 실현 손익에 포함
-        realized_profit = 0.0
-        realized_buy_total = 0.0
-        for code, data in profit_by_stock.items():
-            if data["sell_qty"] > 0:
-                data["profit"] = data["sell_amount"] - data["buy_amount"]
-                realized_profit += data["profit"]
-                realized_buy_total += data["buy_amount"]
-            else:
-                # 매도가 없는 종목은 실현 손익에서 제외
-                data["profit"] = 0.0
-
-        # 실현 손익 관련 총액 (매도 완료된 종목의 매수/매도 금액만)
-        realized_sell_total = sum(
-            data["sell_amount"] for data in profit_by_stock.values() if data["sell_qty"] > 0
-        )
 
         return {
             "orders": orders,

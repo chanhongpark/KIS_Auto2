@@ -262,7 +262,8 @@ if st.session_state["nav_page"] == "overview":
             st.info("현재 추천된 매수 종목이 없습니다. 사이드바에서 스크리닝을 실행해 보세요.")
         else:
             for b in buy_list[:3]:
-                st.markdown(f"**[{b['name']} ({b['code']})]** 현재가: `{b['current_price']:,.0f}원` | 점수: `{b['score']}점` | 추천: `{b['recommended_qty']}주`")
+                buy_tag = "🔄 추가매수" if b.get("code") in holding_codes else "🆕 신규매수"
+                st.markdown(f"**{buy_tag} [{b['name']} ({b['code']})]** 현재가: `{b['current_price']:,.0f}원` | 점수: `{b['score']}점` | 추천: `{b['recommended_qty']}주`")
                 st.caption(", ".join(b.get("reasons", [])))
 
     with c_right:
@@ -303,7 +304,8 @@ elif st.session_state["nav_page"] == "screener":
             with st.container():
                 c1, c2, c3, c4 = st.columns([2.8, 2.2, 2.5, 2.0])
                 with c1:
-                    st.markdown(f"### {item['name']} <small style='color:#64748b'>({item['code']})</small>", unsafe_allow_html=True)
+                    buy_tag = "🔄 추가매수" if item.get("code") in holding_codes else "🆕 신규매수"
+                    st.markdown(f"### {buy_tag} {item['name']} <small style='color:#64748b'>({item['code']})</small>", unsafe_allow_html=True)
                     st.write(f"**현재가:** `{item['current_price']:,.0f}원` ({item['change_rate']:+.2f}%)")
                     st.write(f"**신호 점수:** `{item['score']}점` | **RSI:** `{item.get('rsi')}`")
                     reasons_text = " • ".join(item.get("reasons", []))

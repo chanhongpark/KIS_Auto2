@@ -57,8 +57,10 @@ class StockScreener:
 
         return df
 
-    def evaluate_buy_signals(self, code: str, name: str) -> Optional[Dict[str, Any]]:
+    def evaluate_buy_signals(self, code: str, name: str, held_codes: Optional[set] = None) -> Optional[Dict[str, Any]]:
         """개별 종목의 매수 타당성 및 점수 분석"""
+        held_codes = held_codes or set()
+        is_additional_buy = code in held_codes
         candles = self.api.get_daily_chart(code, count=60)
         # 실시간 현재가를 조회하여 일봉 데이터에 반영 (현시점 기준 판단)
         realtime = self.api.get_stock_price(code)
@@ -134,7 +136,7 @@ class StockScreener:
             qty = max(1, int(budget // current_price)) if current_price > 0 else 1
             total_est = qty * current_price
 
-            return {
+            result = {
                 "code": code,
                 "name": name,
                 "current_price": current_price,
@@ -147,7 +149,30 @@ class StockScreener:
                 "ma5": round(float(last["ma5"]), 0),
                 "ma20": round(float(last["ma20"]), 0)
             }
+
+            # 현재 보유 종목이면 추가매수로 구분 표시
+            if is_additional_buy:
+                result["is_additional_buy"] = True
+                result["buy_type"] = "추가매수"
+                result["reasons"] = ["📌 현재 보유 종목 추가매수 추천"] + reasons
+            else:
+                result["is_additional_buy"] = False
+                result["buy_type"] = "신규매수"
+            return result
         return None
+
+    def _is_recently_bought(self, code: str, days: int = 2) -> bool:
+        """매수일로부터 지정된 일수(days) 이내에 매수된 종목인지 확인"""
+        try:
+            end_date = today().strftime("%Y%m%d")
+            start_date = (today() - datetime.timedelta(days=days)).strftime("%Y%m%d")
+            orders = self.api.get_order_history(start_date=start_date, end_date=end_date)
+            for order in orders:
+                if order.get("code") == code and order.get("buy_sell") == "매수":
+                    return True
+        except Exception as e:
+            self.logger.warning(f"[{code}] 최근 매수 여부 확인 중 예외: {e}")
+        return False
 
     def evaluate_sell_signals(self, holding: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """보유 종목에 대한 매도 필요 여부 분석"""
@@ -156,6 +181,11 @@ class StockScreener:
         profit_rate = float(holding.get("profit_rate", 0.0))
         current_price = float(holding.get("current_price", 0.0))
         holding_qty = int(holding.get("quantity", 0))
+
+        # 매수일로부터 2일 이내 종목은 매도 추천 제외
+        if self._is_recently_bought(code, days=2):
+            self.logger.info(f"[{name}({code})] 매수 후 2일 이내 종목으로 매도 추천 제외")
+            return None
 
         target_profit_rate = float(config.CURRENT_SETTINGS.get("target_profit_rate", 0.05)) * 100
         stop_loss_rate = float(config.CURRENT_SETTINGS.get("stop_loss_rate", -0.03)) * 100
@@ -225,15 +255,21 @@ class StockScreener:
     def run_premarket_screening(self) -> Dict[str, Any]:
         """개장 전 전체 스크리닝 실행 및 제안서 생성"""
         self.logger.info("=== 개장 전 자동 종목 스크리닝 시작 ===")
-        
-        # 1. 매수 후보 종목 발굴
+
+        # 0. 현재 계좌 보유 종목 조회 (추가매수 구분 및 매도 분석용)
+        balance = self.api.get_account_balance()
+        holdings = balance.get("holdings", [])
+        held_codes = {h.get("code") for h in holdings if h.get("code")}
+        self.logger.info(f"현재 보유 종목: {len(holdings)}건, {held_codes}")
+
+        # 1. 매수 후보 종목 발굴 (보유 종목은 추가매수로 구분)
         watchlist = config.CURRENT_SETTINGS.get("watchlist", [])
         buy_proposals = []
         for stock in watchlist:
             code = stock.get("code")
             name = stock.get("name")
             try:
-                res = self.evaluate_buy_signals(code, name)
+                res = self.evaluate_buy_signals(code, name, held_codes=held_codes)
                 if res:
                     buy_proposals.append(res)
             except Exception as e:
@@ -244,8 +280,6 @@ class StockScreener:
         top_buy_proposals = buy_proposals[:5]
 
         # 2. 현재 보유 주식 매도 추천 분석
-        balance = self.api.get_account_balance()
-        holdings = balance.get("holdings", [])
         sell_proposals = []
         for holding in holdings:
             try:

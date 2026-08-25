@@ -243,8 +243,9 @@ class TelegramNotifier:
         if buy_list:
             text += "\n<b>🟢 매수 추천 종목:</b>\n"
             for item in buy_list[:5]:
+                buy_tag = "🔄 추가매수" if item.get("is_additional_buy") else "🆕 신규매수"
                 text += (
-                    f"• {item.get('name', '')} ({item.get('code', '')}) "
+                    f"• {buy_tag} {item.get('name', '')} ({item.get('code', '')}) "
                     f"| {item.get('current_price', 0):,.0f}원 "
                     f"| 점수 {item.get('score', 0)}점\n"
                 )
