@@ -7,7 +7,6 @@ import time
 import datetime
 import pandas as pd
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
@@ -153,6 +152,24 @@ def init_system():
 
 scheduler, api = init_system()
 screener = StockScreener(api)
+
+# 실시간 매도 신호 감지 fragment (페이지 전체 refresh 없이 독립적으로 60초마다 실행)
+@st.fragment(run_every=60)
+def realtime_detection_fragment():
+    # 5분(300초) 간격 자동 체크
+    last_check = st.session_state.get("last_realtime_check", 0.0)
+    now_ts = time.time()
+    if now_ts - last_check >= 300:
+        st.session_state["last_realtime_check"] = now_ts
+        with st.spinner("🔄 5분 주기 매도 신호 자동 체크 중..."):
+            updated = screener.check_sell_signals_now()
+            st.session_state["last_check_time"] = now_str("%H:%M:%S")
+            st.success(f"🔄 자동 체크 완료: {len(updated.get('sell_proposals', []))}건의 매도 신호 감지")
+            # 매도 신호 분석 완료 후 페이지 전체 refresh하여 최신 매도 추천 목록 반영
+            time.sleep(1)
+            st.rerun()
+    else:
+        st.caption("⏳ 5분 주기로 자동 체크가 실행됩니다.")
 
 # 사이드바 구성 (럭셔리 퀀트 터미널)
 with st.sidebar:
@@ -477,21 +494,7 @@ elif st.session_state["nav_page"] == "portfolio":
     if realtime_on:
         st.session_state["realtime_detect_on"] = True
         st.info("🔄 실시간 감지가 활성화되었습니다. 5분마다 보유 주식 매도 신호를 자동 체크합니다.")
-        # 60초마다 페이지 자동 새로고침 (5분 주기 체크를 위한 트리거)
-        st_autorefresh(interval=60000, key="realtime_autorefresh")
-        # 5분(300초) 간격 자동 체크
-        last_check = st.session_state.get("last_realtime_check", 0.0)
-        now_ts = time.time()
-        if now_ts - last_check >= 300:
-            st.session_state["last_realtime_check"] = now_ts
-            with st.spinner("🔄 5분 주기 매도 신호 자동 체크 중..."):
-                updated = screener.check_sell_signals_now()
-                st.session_state["last_check_time"] = now_str("%H:%M:%S")
-                st.success(f"🔄 자동 체크 완료: {len(updated.get('sell_proposals', []))}건의 매도 신호 감지")
-                time.sleep(1)
-                st.rerun()
-        else:
-            st.caption("⏳ 5분 주기로 자동 체크가 실행됩니다.")
+        realtime_detection_fragment()
     else:
         st.session_state["realtime_detect_on"] = False
 
