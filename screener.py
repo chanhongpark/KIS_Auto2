@@ -182,11 +182,6 @@ class StockScreener:
         current_price = float(holding.get("current_price", 0.0))
         holding_qty = int(holding.get("quantity", 0))
 
-        # 매수일로부터 2일 이내 종목은 매도 추천 제외
-        if self._is_recently_bought(code, days=2):
-            self.logger.info(f"[{name}({code})] 매수 후 2일 이내 종목으로 매도 추천 제외")
-            return None
-
         target_profit_rate = float(config.CURRENT_SETTINGS.get("target_profit_rate", 0.05)) * 100
         stop_loss_rate = float(config.CURRENT_SETTINGS.get("stop_loss_rate", -0.03)) * 100
 
@@ -201,6 +196,12 @@ class StockScreener:
         if profit_rate <= stop_loss_rate:
             sell_reasons.append(f"⚠️ 손절 기준선 도달 ({profit_rate:.2f}% <= {stop_loss_rate:.1f}%)")
             is_urgent = True
+
+        # 익절(목표 수익률 달성)이 발생한 경우가 아니면 매수일로부터 2일 이내 종목은 매도 추천 제외
+        has_profit = profit_rate >= target_profit_rate  # 목표 익절률 달성 여부
+        if not has_profit and self._is_recently_bought(code, days=2):
+            self.logger.info(f"[{name}({code})] 매수 후 2일 이내 종목으로 매도 추천 제외")
+            return None
 
         # 3. 기술적 데드크로스 분석
         candles = self.api.get_daily_chart(code, count=30)
