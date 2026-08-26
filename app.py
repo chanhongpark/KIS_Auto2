@@ -1,10 +1,12 @@
 """
 KIS Auto Trader - Streamlit Control Center (Page Navigation)
 한국투자증권 API 기반 주식 자동매매 & 제어 대시보드
+15:15 종가 매수 및 실시간 리스크 관리(손절 최우선 / 분할 익절) & FinanceDataReader 백테스팅
 """
 import os
 import time
 import datetime
+from typing import Optional, Dict, Any, List
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
@@ -16,6 +18,7 @@ from screener import StockScreener
 from scheduler import start_scheduler
 from telegram_notifier import notifier
 from time_utils import now_str, today
+from backtester import Backtester
 
 # 페이지 기본 설정
 st.set_page_config(
@@ -135,6 +138,26 @@ st.markdown("""
         text-transform: uppercase;
         margin-bottom: 10px;
     }
+
+    .score-badge {
+        background: rgba(30, 41, 59, 0.8);
+        border: 1px solid #334155;
+        border-radius: 6px;
+        padding: 4px 8px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: #38bdf8;
+        display: inline-block;
+        margin-right: 4px;
+    }
+
+    .timeline-container {
+        background: #0f172a;
+        border: 1px solid #1e293b;
+        border-radius: 12px;
+        padding: 14px 18px;
+        margin-bottom: 20px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -156,7 +179,6 @@ screener = StockScreener(api)
 # 실시간 매도 신호 감지 fragment (페이지 전체 refresh 없이 독립적으로 60초마다 실행)
 @st.fragment(run_every=60)
 def realtime_detection_fragment():
-    # 5분(300초) 간격 자동 체크
     last_check = st.session_state.get("last_realtime_check", 0.0)
     now_ts = time.time()
     if now_ts - last_check >= 300:
@@ -165,13 +187,12 @@ def realtime_detection_fragment():
             updated = screener.check_sell_signals_now()
             st.session_state["last_check_time"] = now_str("%H:%M:%S")
             st.success(f"🔄 자동 체크 완료: {len(updated.get('sell_proposals', []))}건의 매도 신호 감지")
-            # 매도 신호 분석 완료 후 페이지 전체 refresh하여 최신 매도 추천 목록 반영
             time.sleep(1)
             st.rerun()
     else:
-        st.caption("⏳ 5분 주기로 자동 체크가 실행됩니다.")
+        st.caption("⏳ 5분 주기로 실시간 감시가 실행됩니다.")
 
-# 사이드바 구성 (럭셔리 퀀트 터미널)
+# 사이드바 구성
 with st.sidebar:
     st.markdown("""
         <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
@@ -195,23 +216,40 @@ with st.sidebar:
         <div class="sidebar-account-box">
             <div style="font-size: 0.72rem; color: #64748b; font-weight: 600;">ACTIVE ACCOUNT</div>
             <div style="font-size: 0.88rem; font-weight: 700; color: #e2e8f0; font-family: monospace;">{config.CANO}-{config.ACNT_PRDT_CD}</div>
-            <div style="font-size: 0.72rem; color: #94a3b8; margin-top: 4px;">⏰ 스케줄: 매일 {config.CURRENT_SETTINGS.get('premarket_time', '08:30')} KST</div>
+            <div style="font-size: 0.72rem; color: #94a3b8; margin-top: 4px;">⏰ 종가 매수: 매일 15:15 KST</div>
         </div>
     """, unsafe_allow_html=True)
 
-    st.markdown("<div class='nav-header'>NAVIGATION WORKSPACE</div>", unsafe_allow_html=True)
-    
-    # 6대 메뉴 버튼 리스트 (인터랙티브 카드 스타일)
-    menu_items = [
-        ("overview", "📊 Overview • 종합 관제"),
-        ("screener", "🎯 Alpha Screener • 매수 발굴"),
-        ("portfolio", "💼 Portfolio & Risk • 매도 진단"),
-        ("execution", "⚡ Execution • 주문/체결"),
-        ("history", "📜 History & Profit • 매매이력/수익"),
-        ("settings", "⚙️ Settings • 시스템 설정")
-    ]
+    # 1. 원클릭 즉시 실행 퀵 커맨드 (최상단 배치)
+    st.markdown("<div class='nav-header'>⚡ QUICK COMMANDS • 즉시 실행</div>", unsafe_allow_html=True)
+    if st.button("🔄 실시간 잔고 동기화 (Sync)", use_container_width=True, key="btn_quick_sync"):
+        st.rerun()
 
-    for key, label in menu_items:
+    if st.button("🎯 15:15 종가 알파 스크리닝", use_container_width=True, key="btn_quick_screen"):
+        with st.spinner("거래량 1.04배 보정 및 캡 점수 기반 종가 매수 스크리닝 중..."):
+            screener.run_closing_price_screening()
+            st.success("15:15 종가 스크리닝 완료!")
+            time.sleep(1)
+            st.rerun()
+
+    if st.button("🚨 09:00 시초 손절 긴급 스캔", use_container_width=True, key="btn_quick_stoploss"):
+        with st.spinner("시초가 갭하락 및 보유 종목 긴급 손절 감시 중..."):
+            sells = screener.check_market_open_stop_loss()
+            st.success(f"시초가 감시 완료: 긴급 손절 {len(sells)}건")
+            time.sleep(1)
+            st.rerun()
+
+    st.divider()
+
+    # 2. 실시간 매매 관제 (Core Trading)
+    st.markdown("<div class='nav-header'>🚀 CORE TRADING • 실시간 관제</div>", unsafe_allow_html=True)
+    live_menu = [
+        ("overview", "📊 Overview • 종합 자산 관제"),
+        ("screener", "🎯 Alpha Hunter • 15:15 종가 매수"),
+        ("portfolio", "💼 Risk Matrix • 보유 자산 & 리스크"),
+        ("execution", "⚡ Order Book • 실시간 주문/체결")
+    ]
+    for key, label in live_menu:
         is_active = (st.session_state["nav_page"] == key)
         if st.button(
             label,
@@ -222,19 +260,36 @@ with st.sidebar:
             st.session_state["nav_page"] = key
             st.rerun()
 
-    st.divider()
-    st.markdown("<div class='nav-header'>QUICK ACTIONS</div>", unsafe_allow_html=True)
-    if st.button("🔄 계좌 잔고 동기화", use_container_width=True, key="btn_quick_sync"):
-        st.rerun()
-
-    if st.button("🔍 100종목 즉시 스크리닝", use_container_width=True, key="btn_quick_screen"):
-        with st.spinner("100개 종목 퀀트 지표 분석 중..."):
-            screener.run_premarket_screening()
-            st.success("스크리닝 완료!")
-            time.sleep(1)
+    # 3. 퀀트 연구 및 분석 (Quant Lab)
+    st.markdown("<div class='nav-header' style='margin-top: 14px;'>📈 QUANT LAB • 성과 분석 & 검증</div>", unsafe_allow_html=True)
+    lab_menu = [
+        ("history", "📜 Performance • 실현 손익 분석"),
+        ("backtest", "🧪 Backtester • 전략 시뮬레이터")
+    ]
+    for key, label in lab_menu:
+        is_active = (st.session_state["nav_page"] == key)
+        if st.button(
+            label,
+            key=f"nav_btn_{key}",
+            type="primary" if is_active else "secondary",
+            use_container_width=True
+        ):
+            st.session_state["nav_page"] = key
             st.rerun()
 
-    st.caption("KIS Auto Trading Engine v2.0 • Ultra Low-Latency")
+    # 4. 시스템 환경 설정 (Configuration)
+    st.markdown("<div class='nav-header' style='margin-top: 14px;'>⚙️ SYSTEM • 환경 설정</div>", unsafe_allow_html=True)
+    is_active = (st.session_state["nav_page"] == "settings")
+    if st.button(
+        "⚙️ Engine Config • 시스템 설정",
+        key="nav_btn_settings",
+        type="primary" if is_active else "secondary",
+        use_container_width=True
+    ):
+        st.session_state["nav_page"] = "settings"
+        st.rerun()
+
+    st.caption("KIS Auto Trading Engine v2.5 • 15:15 Closing-Buy")
 
 # 계좌 및 제안서 데이터 조회
 balance_data = api.get_account_balance()
@@ -242,13 +297,127 @@ summary = balance_data.get("summary", {})
 holdings = balance_data.get("holdings", [])
 proposals = screener.load_proposals()
 
-# 매도 추천에서 이미 매도 완료된 종목 제외 (현재 보유 종목만 필터링)
+# 매도 추천에서 이미 매도 완료된 종목 제외
 holding_codes = {h["code"] for h in holdings}
 if proposals.get("sell_proposals"):
     proposals["sell_proposals"] = [
         s for s in proposals["sell_proposals"]
         if s.get("code") in holding_codes
     ]
+
+def render_interactive_stock_chart(api_client, screener_engine, code: str, name: str, avg_buy_price: Optional[float] = None, profit_rate: Optional[float] = None):
+    """보유 종목 및 추천 종목의 실시간 캔들 차트, 이동평균선, 볼린저밴드, 거래량, RSI 시각화 렌더러"""
+    with st.spinner(f"📈 {name}({code}) 실시간 일봉 차트 및 보조지표 로드 중..."):
+        candles = api_client.get_daily_chart(code, count=65)
+        realtime = api_client.get_stock_price(code)
+        if realtime.get("rt_cd") == "0" and realtime.get("price", 0) > 0:
+            today_str = today().strftime("%Y%m%d")
+            if not candles or candles[-1].get("date") != today_str:
+                candles.append({
+                    "date": today_str,
+                    "close": realtime["price"],
+                    "open": realtime.get("stck_oprc", realtime["price"]),
+                    "high": realtime.get("stck_hgpr", realtime["price"]),
+                    "low": realtime.get("stck_lwpr", realtime["price"]),
+                    "volume": realtime.get("acml_vol", 0),
+                    "change_rate": realtime.get("prdy_ctrt", 0.0)
+                })
+            else:
+                candles[-1].update({
+                    "close": realtime["price"],
+                    "open": realtime.get("stck_oprc", candles[-1].get("open", realtime["price"])),
+                    "high": realtime.get("stck_hgpr", candles[-1].get("high", realtime["price"])),
+                    "low": realtime.get("stck_lwpr", candles[-1].get("low", realtime["price"])),
+                    "volume": realtime.get("acml_vol", candles[-1].get("volume", 0)),
+                    "change_rate": realtime.get("prdy_ctrt", candles[-1].get("change_rate", 0.0))
+                })
+
+        df_tech = screener_engine.calculate_technical_indicators(candles, is_intraday=True)
+        if df_tech is not None and not df_tech.empty:
+            fig = make_subplots(
+                rows=3, cols=1,
+                shared_xaxes=True,
+                vertical_spacing=0.04,
+                row_heights=[0.55, 0.20, 0.25],
+                subplot_titles=(
+                    f"{name} ({code}) 일봉 캔들 & 이동평균선 & 볼린저밴드",
+                    "거래량 & 20일 거래량 이평",
+                    "RSI (14)"
+                )
+            )
+
+            # 1. 캔들스틱
+            fig.add_trace(
+                go.Candlestick(
+                    x=df_tech["date"],
+                    open=df_tech["open"],
+                    high=df_tech["high"],
+                    low=df_tech["low"],
+                    close=df_tech["close"],
+                    name="캔들",
+                    increasing_line_color="#ef4444",
+                    decreasing_line_color="#3b82f6"
+                ),
+                row=1, col=1
+            )
+            fig.add_trace(go.Scatter(x=df_tech["date"], y=df_tech["ma5"], line=dict(color="#f59e0b", width=1.5), name="5일선"), row=1, col=1)
+            fig.add_trace(go.Scatter(x=df_tech["date"], y=df_tech["ma20"], line=dict(color="#10b981", width=2), name="20일선"), row=1, col=1)
+            if "ma60" in df_tech:
+                fig.add_trace(go.Scatter(x=df_tech["date"], y=df_tech["ma60"], line=dict(color="#8b5cf6", width=1.5), name="60일선"), row=1, col=1)
+
+            fig.add_trace(go.Scatter(x=df_tech["date"], y=df_tech["bb_upper"], line=dict(color="rgba(148, 163, 184, 0.5)", dash="dot", width=1), name="BB상단", showlegend=False), row=1, col=1)
+            fig.add_trace(go.Scatter(x=df_tech["date"], y=df_tech["bb_lower"], line=dict(color="rgba(148, 163, 184, 0.5)", dash="dot", width=1), fill="tonexty", fillcolor="rgba(148, 163, 184, 0.05)", name="BB하단", showlegend=False), row=1, col=1)
+
+            # 매입평균가 기준선
+            if avg_buy_price and avg_buy_price > 0:
+                ann_text = f"매입평단가: {avg_buy_price:,.0f}원 ({profit_rate:+.2f}%)" if profit_rate is not None else f"매입평단가: {avg_buy_price:,.0f}원"
+                fig.add_hline(
+                    y=avg_buy_price,
+                    line_dash="dash",
+                    line_color="#fbbf24",
+                    line_width=2,
+                    annotation_text=ann_text,
+                    annotation_position="top right",
+                    annotation_font_color="#fbbf24",
+                    row=1, col=1
+                )
+
+            # 2. 거래량 차트
+            colors = ["#ef4444" if row["close"] >= row["open"] else "#3b82f6" for _, row in df_tech.iterrows()]
+            fig.add_trace(go.Bar(x=df_tech["date"], y=df_tech["volume"], marker_color=colors, name="거래량"), row=2, col=1)
+            fig.add_trace(go.Scatter(x=df_tech["date"], y=df_tech["vol_ma20"], line=dict(color="#fbbf24", width=1.5), name="전일 20일 거래량이평"), row=2, col=1)
+
+            # 3. RSI 차트
+            fig.add_trace(go.Scatter(x=df_tech["date"], y=df_tech["rsi14"], line=dict(color="#06b6d4", width=2), name="RSI(14)"), row=3, col=1)
+            fig.add_hline(y=70, line_dash="dash", line_color="#ef4444", row=3, col=1)
+            fig.add_hline(y=30, line_dash="dash", line_color="#3b82f6", row=3, col=1)
+
+            fig.update_layout(
+                height=560,
+                template="plotly_dark",
+                xaxis_rangeslider_visible=False,
+                margin=dict(l=20, r=20, t=40, b=20),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+            latest = df_tech.iloc[-1]
+            m1, m2, m3, m4, m5 = st.columns(5)
+            with m1:
+                st.metric("현재가", f"{latest['close']:,.0f}원", delta=f"{latest.get('change_rate', 0):+.2f}%")
+            with m2:
+                rsi_val = latest['rsi14']
+                prev_rsi = df_tech.iloc[-2]['rsi14'] if len(df_tech) >= 2 else rsi_val
+                st.metric("RSI(14)", f"{rsi_val:.1f}", delta=f"{rsi_val - prev_rsi:+.1f}")
+            with m3:
+                vol_ratio = (latest['volume'] / (latest['vol_ma20'] + 1e-9)) * 100 if latest.get('vol_ma20') else 0
+                st.metric("20일 평균대비 거래량", f"{vol_ratio:.0f}%")
+            with m4:
+                st.metric("20일선 (중기)", f"{latest['ma20']:,.0f}원")
+            with m5:
+                st.metric("볼린저 하단 (지지선)", f"{latest['bb_lower']:,.0f}원")
+        else:
+            st.warning("차트 데이터를 불러올 수 없습니다.")
 
 # ==============================================================================
 # 1. 종합 대시보드 페이지
@@ -257,7 +426,19 @@ if st.session_state["nav_page"] == "overview":
     st.title("🏠 종합 자산 및 매매 모니터링")
     st.caption(f"서버 시각: {now_str()} (KST)")
 
-    # 상단 요약 카드
+    st.markdown("""
+        <div class="timeline-container">
+            <div style="font-size: 0.78rem; font-weight: 700; color: #38bdf8; margin-bottom: 8px;">⏱️ 일일 5단계 운영 타임라인</div>
+            <div style="display: flex; gap: 10px; font-size: 0.75rem; color: #cbd5e1; flex-wrap: wrap;">
+                <span><b>09:00</b> 시초가 손절 감시</span> ➔
+                <span><b>09:05~15:15</b> 실시간 익절/손절 감시</span> ➔
+                <span style="color: #38bdf8; font-weight: 700;"><b>15:15</b> 거래량 1.04배 종가 평가</span> ➔
+                <span><b>15:18</b> 상위종목 시장가 매수</span> ➔
+                <span><b>15:30</b> 장마감 정산</span>
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
+
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric(label="총 평가 자산", value=f"{summary.get('tot_asset', 0):,.0f} 원")
@@ -273,27 +454,33 @@ if st.session_state["nav_page"] == "overview":
 
     c_left, c_right = st.columns([1, 1])
     with c_left:
-        st.subheader("🌅 오늘의 Top 매수 추천 종목")
+        st.subheader("🌅 15:15 종가 매수 추천 Top 종목")
         buy_list = proposals.get("buy_proposals", [])
         if not buy_list:
-            st.info("현재 추천된 매수 종목이 없습니다. 사이드바에서 스크리닝을 실행해 보세요.")
+            st.info("현재 매수 조건을 통과한 추천 종목이 없습니다. (총점 45점 이상 & 수급 필수 게이트 충족 필요)")
         else:
             for b in buy_list[:3]:
                 buy_tag = "🔄 추가매수" if b.get("code") in holding_codes else "🆕 신규매수"
-                st.markdown(f"**{buy_tag} [{b['name']} ({b['code']})]** 현재가: `{b['current_price']:,.0f}원` | 점수: `{b['score']}점` | 추천: `{b['recommended_qty']}주`")
-                st.caption(", ".join(b.get("reasons", [])))
+                t_sc = b.get("trend_score", 0)
+                s_sc = b.get("supply_score", 0)
+                m_sc = b.get("momentum_score", 0)
+                st.markdown(f"**{buy_tag} [{b['name']} ({b['code']})]** 현재가: `{b['current_price']:,.0f}원` | **총점: `{b['score']}점`** (추세 {t_sc}/수급 {s_sc}/모멘텀 {m_sc})")
+                st.caption(f"⚡ 보정 거래량: {b.get('adjusted_volume', 0):,.0f}주 (20일평균 대비 {b.get('vol_ratio', 0)}%)")
+                st.caption(" • ".join(b.get("reasons", [])))
 
     with c_right:
-        st.subheader("🚨 매도 추천 알림")
+        st.subheader("🚨 매도 & 리스크 관리 알림")
         sell_list = proposals.get("sell_proposals", [])
         if not sell_list:
             st.success("현재 매도가 시급한 보유 종목이 없습니다.")
         else:
             for s in sell_list:
-                st.warning(f"**[{s['name']} ({s['code']})]** 수익률: **{s['profit_rate']:+.2f}%** | 보유: {s['holding_qty']}주\n- {', '.join(s.get('reasons', []))}")
+                urgent_badge = "🚨 [긴급 손절]" if s.get("is_urgent") else "⚠️ [매도 신호]"
+                sell_type = s.get("sell_type", "매도")
+                st.warning(f"**{urgent_badge} [{s['name']} ({s['code']})]** {sell_type} | 수익률: **{s['profit_rate']:+.2f}%** | 매도수량: {s['sell_qty']}주\n- {', '.join(s.get('reasons', []))}")
 
     st.divider()
-    st.subheader("📦 현재 보유 주식 요약")
+    st.subheader("📦 현재 보유 주식 요약 & 실시간 차트")
     if not holdings:
         st.info("현재 계좌에 보유 중인 주식이 없습니다.")
     else:
@@ -306,16 +493,37 @@ if st.session_state["nav_page"] == "overview":
         h_df["평가금액(원)"] = h_df["평가금액(원)"].apply(lambda x: f"{x:,.0f}")
         st.dataframe(h_df, use_container_width=True)
 
+        # 보유 종목 차트 선택 뷰어
+        st.markdown("#### 📈 보유 종목 인터랙티브 차트 분석")
+        holding_options = [f"{h['name']} ({h['code']}) | 평단가: {h['avg_buy_price']:,.0f}원 | 수익률: {h['profit_rate']:+.2f}%" for h in holdings]
+        selected_idx = st.selectbox(
+            "차트를 확인할 보유 종목을 선택하세요",
+            range(len(holdings)),
+            format_func=lambda i: holding_options[i],
+            key="overview_holding_chart_select"
+        )
+
+        selected_h = holdings[selected_idx]
+        with st.expander(f"📊 {selected_h['name']} ({selected_h['code']}) 실시간 차트 & 지표 상세", expanded=True):
+            render_interactive_stock_chart(
+                api_client=api,
+                screener_engine=screener,
+                code=selected_h["code"],
+                name=selected_h["name"],
+                avg_buy_price=float(selected_h.get("avg_buy_price", 0)),
+                profit_rate=float(selected_h.get("profit_rate", 0))
+            )
+
 # ==============================================================================
-# 2. 개장 전 매수 추천 페이지
+# 2. 15:15 종가 매수 추천 페이지
 # ==============================================================================
 elif st.session_state["nav_page"] == "screener":
-    st.title("🎯 Alpha Screener • 매수 추천")
-    st.caption(f"100종목 퀀트 분석 기준: **{proposals.get('generated_at', '-')}** (월~금 08:30 KST)")
+    st.title("🎯 Alpha Screener • 15:15 종가 매수 발굴")
+    st.caption(f"스크리닝 기준 시각: **{proposals.get('generated_at', '-')}** | 거래량 1.04배 보정치 & 캡 점수 적용")
 
     buy_list = proposals.get("buy_proposals", [])
     if not buy_list:
-        st.info("현재 추천된 매수 종목이 없습니다. 사이드바에서 스크리닝을 실행해 주세요.")
+        st.info("현재 추천된 매수 종목이 없습니다. (총점 45점 이상 & 수급 필수 게이트 충족 종목)")
     else:
         for idx, item in enumerate(buy_list):
             with st.container():
@@ -324,12 +532,21 @@ elif st.session_state["nav_page"] == "screener":
                     buy_tag = "🔄 추가매수" if item.get("code") in holding_codes else "🆕 신규매수"
                     st.markdown(f"### {buy_tag} {item['name']} <small style='color:#64748b'>({item['code']})</small>", unsafe_allow_html=True)
                     st.write(f"**현재가:** `{item['current_price']:,.0f}원` ({item['change_rate']:+.2f}%)")
-                    st.write(f"**신호 점수:** `{item['score']}점` | **RSI:** `{item.get('rsi')}`")
+                    
+                    t_sc = item.get("trend_score", 0)
+                    s_sc = item.get("supply_score", 0)
+                    m_sc = item.get("momentum_score", 0)
+                    st.markdown(f"""
+                        <span class="score-badge">총점 {item['score']}점</span>
+                        <span class="score-badge">추세 {t_sc}/30</span>
+                        <span class="score-badge">수급 {s_sc}/25</span>
+                        <span class="score-badge">모멘텀 {m_sc}/25</span>
+                    """, unsafe_allow_html=True)
+                    st.caption(f"⚡ 보정 거래량: {item.get('adjusted_volume', 0):,.0f}주 (전일20일평균 대비 {item.get('vol_ratio', 0)}%)")
                     reasons_text = " • ".join(item.get("reasons", []))
                     st.caption(reasons_text)
                 
                 with c2:
-                    # 주문 유형 선택 (기본: 시장가)
                     ord_type = st.radio(
                         "주문 유형",
                         ["시장가", "지정가"],
@@ -349,7 +566,7 @@ elif st.session_state["nav_page"] == "screener":
                         )
                     else:
                         target_price = int(item['current_price'])
-                        st.caption("⚡ 시장가 즉시 체결")
+                        st.caption("⚡ 종가 시장가 즉시 체결")
 
                 with c3:
                     rec_qty = item.get("recommended_qty", 1)
@@ -382,7 +599,6 @@ elif st.session_state["nav_page"] == "screener":
                             )
                             if res.get("rt_cd") == "0":
                                 st.success(f"✅ 주문 완료 (No. {res.get('order_no')})")
-                                # 텔레그램 매수 성공 알림 전송
                                 notifier.send_buy_success(
                                     name=item["name"],
                                     code=item["code"],
@@ -396,11 +612,10 @@ elif st.session_state["nav_page"] == "screener":
                             else:
                                 st.error(f"❌ 주문 실패: {res.get('msg1')}")
 
-                # 매수 후보 상세보기 (차트 및 주요 지표)
                 with st.expander(f"📈 {item['name']} 차트 및 지표 상세 분석"):
                     with st.spinner(f"{item['name']} 차트 데이터 로드 중..."):
-                        candles = api.get_daily_chart(item["code"], count=60)
-                        df_tech = screener.calculate_technical_indicators(candles)
+                        candles = api.get_daily_chart(item["code"], count=65)
+                        df_tech = screener.calculate_technical_indicators(candles, is_intraday=True)
                         
                         if df_tech is not None and not df_tech.empty:
                             fig = make_subplots(
@@ -411,7 +626,6 @@ elif st.session_state["nav_page"] == "screener":
                                 subplot_titles=(f"{item['name']} 일봉 캔들 & 이동평균선 & 볼린저밴드", "거래량 & 20일 거래량 이평", "RSI (14)")
                             )
 
-                            # 캔들스틱 차트
                             fig.add_trace(
                                 go.Candlestick(
                                     x=df_tech["date"],
@@ -433,12 +647,10 @@ elif st.session_state["nav_page"] == "screener":
                             fig.add_trace(go.Scatter(x=df_tech["date"], y=df_tech["bb_upper"], line=dict(color="rgba(148, 163, 184, 0.5)", dash="dot", width=1), name="BB상단", showlegend=False), row=1, col=1)
                             fig.add_trace(go.Scatter(x=df_tech["date"], y=df_tech["bb_lower"], line=dict(color="rgba(148, 163, 184, 0.5)", dash="dot", width=1), fill="tonexty", fillcolor="rgba(148, 163, 184, 0.05)", name="BB하단", showlegend=False), row=1, col=1)
 
-                            # 거래량 차트
                             colors = ["#ef4444" if row["close"] >= row["open"] else "#3b82f6" for _, row in df_tech.iterrows()]
                             fig.add_trace(go.Bar(x=df_tech["date"], y=df_tech["volume"], marker_color=colors, name="거래량"), row=2, col=1)
-                            fig.add_trace(go.Scatter(x=df_tech["date"], y=df_tech["vol_ma20"], line=dict(color="#fbbf24", width=1.5), name="20일 거래량이평"), row=2, col=1)
+                            fig.add_trace(go.Scatter(x=df_tech["date"], y=df_tech["vol_ma20"], line=dict(color="#fbbf24", width=1.5), name="전일 20일 거래량이평"), row=2, col=1)
 
-                            # RSI 차트
                             fig.add_trace(go.Scatter(x=df_tech["date"], y=df_tech["rsi14"], line=dict(color="#06b6d4", width=2), name="RSI(14)"), row=3, col=1)
                             fig.add_hline(y=70, line_dash="dash", line_color="#ef4444", row=3, col=1)
                             fig.add_hline(y=30, line_dash="dash", line_color="#3b82f6", row=3, col=1)
@@ -451,29 +663,17 @@ elif st.session_state["nav_page"] == "screener":
                                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
                             )
                             st.plotly_chart(fig, use_container_width=True)
-
-                            latest = df_tech.iloc[-1]
-                            m_col1, m_col2, m_col3, m_col4 = st.columns(4)
-                            with m_col1:
-                                st.metric("RSI(14)", f"{latest['rsi14']:.1f}", delta=f"{latest['rsi14']-df_tech.iloc[-2]['rsi14']:+.1f}")
-                            with m_col2:
-                                vol_ratio = (latest['volume'] / (latest['vol_ma20'] + 1e-9)) * 100
-                                st.metric("20일 평균대비 거래량", f"{vol_ratio:.0f}%")
-                            with m_col3:
-                                st.metric("20일선", f"{latest['ma20']:,.0f}원")
-                            with m_col4:
-                                st.metric("볼린저 하단", f"{latest['bb_lower']:,.0f}원")
                         else:
                             st.warning("차트 데이터를 불러올 수 없습니다.")
                 st.divider()
 
 # ==============================================================================
-# 3. 보유 종목 & 매도 관리 페이지
+# 3. 보유 종목 & 매도 리스크 관리 페이지
 # ==============================================================================
 elif st.session_state["nav_page"] == "portfolio":
-    st.title("💼 Portfolio & Risk • 보유 종목 및 매도 진단")
+    st.title("💼 Portfolio & Risk • 실시간 매도 및 리스크 관리")
+    st.caption("손절 최우선 원칙 (-3% 즉시 전량 매도) | 목표 익절 (+5% 50% 분할 익절) | 2영업일 유예 원칙 적용")
 
-    # 실시간 감지 / 즉시 체크 버튼
     col_btn1, col_btn2 = st.columns(2)
     with col_btn1:
         realtime_on = st.toggle(
@@ -490,7 +690,6 @@ elif st.session_state["nav_page"] == "portfolio":
                 time.sleep(1)
                 st.rerun()
 
-    # 실시간 감지 상태 표시
     if realtime_on:
         st.session_state["realtime_detect_on"] = True
         st.info("🔄 실시간 감지가 활성화되었습니다. 5분마다 보유 주식 매도 신호를 자동 체크합니다.")
@@ -498,22 +697,24 @@ elif st.session_state["nav_page"] == "portfolio":
     else:
         st.session_state["realtime_detect_on"] = False
 
-    # 마지막 체크 시간 표시
     last_check_time = st.session_state.get("last_check_time")
     if last_check_time:
         st.caption(f"⏰ 마지막 매도 신호 체크: {last_check_time}")
 
     st.divider()
 
-    # 매도 추천 긴급/주의 종목
     sell_list = proposals.get("sell_proposals", [])
     if sell_list:
         st.warning(f"⚠️ **{len(sell_list)}건**의 매도 시그널이 감지되었습니다.")
         for s_idx, s_item in enumerate(sell_list):
-            with st.expander(f"🚨 [매도 신호] {s_item['name']} ({s_item['code']}) • 수익률 {s_item['profit_rate']:+.2f}%", expanded=True):
+            is_urgent = s_item.get("is_urgent", False)
+            sell_type = s_item.get("sell_type", "매도")
+            header_icon = "🚨 [긴급 손절]" if is_urgent else "⚠️ [매도 신호]"
+            
+            with st.expander(f"{header_icon} {s_item['name']} ({s_item['code']}) • {sell_type} • 수익률 {s_item['profit_rate']:+.2f}%", expanded=True):
                 sc1, sc2, sc3, sc4 = st.columns([2.5, 2.0, 2.0, 2.0])
                 with sc1:
-                    st.write(f"**보유량:** `{s_item['holding_qty']:,}주` | **평단가:** `{s_item['avg_buy_price']:,.0f}원`")
+                    st.write(f"**보유량:** `{s_item['holding_qty']:,}주` | **권고 매도량:** `{s_item.get('sell_qty', s_item['holding_qty']):,}주`")
                     st.write(f"**현재가:** `{s_item['current_price']:,.0f}원` | **평가손익:** `{s_item['profit_loss']:+,.0f}원`")
                     for r in s_item.get("reasons", []):
                         st.caption(f"• {r}")
@@ -540,11 +741,12 @@ elif st.session_state["nav_page"] == "portfolio":
                         st.caption("⚡ 시장가 즉시 매도")
 
                 with sc3:
+                    default_qty = s_item.get("sell_qty", s_item["holding_qty"])
                     sell_qty = st.number_input(
                         "매도 수량(주)",
                         min_value=1,
                         max_value=s_item["holding_qty"],
-                        value=s_item["holding_qty"],
+                        value=default_qty,
                         key=f"sell_qty_{s_item['code']}_{s_idx}"
                     )
                     st.write(f"예상 매도액: **{sell_qty * sell_target_price:,.0f}원**")
@@ -552,7 +754,8 @@ elif st.session_state["nav_page"] == "portfolio":
                 with sc4:
                     st.write("")
                     st.write("")
-                    if st.button(f"🚨 매도 ({sell_ord_type})", key=f"btn_sell_{s_item['code']}_{s_idx}", type="primary", use_container_width=True):
+                    btn_text = f"🚨 긴급 매도" if is_urgent else f"⚡ 매도 ({sell_ord_type})"
+                    if st.button(btn_text, key=f"btn_sell_{s_item['code']}_{s_idx}", type="primary", use_container_width=True):
                         is_sell_limit = (sell_ord_type == "지정가")
                         sell_ord_dv = "00" if is_sell_limit else "01"
                         sell_prc_val = int(sell_target_price) if is_sell_limit else 0
@@ -567,7 +770,6 @@ elif st.session_state["nav_page"] == "portfolio":
                             )
                             if res.get("rt_cd") == "0":
                                 st.success(f"✅ 매도 완료 (No. {res.get('order_no')})")
-                                # 텔레그램 매도 성공 알림 전송
                                 notifier.send_sell_success(
                                     name=s_item["name"],
                                     code=s_item["code"],
@@ -582,7 +784,6 @@ elif st.session_state["nav_page"] == "portfolio":
                                 st.error(f"❌ 매도 실패: {res.get('msg1')}")
         st.divider()
 
-    # 전체 보유 종목 테이블
     if not holdings:
         st.info("현재 계좌에 보유 중인 주식이 없습니다.")
     else:
@@ -596,8 +797,312 @@ elif st.session_state["nav_page"] == "portfolio":
         h_df["평가금액(원)"] = h_df["평가금액(원)"].apply(lambda x: f"{x:,.0f}")
         st.dataframe(h_df, use_container_width=True)
 
+        st.markdown("#### 📈 보유 종목 인터랙티브 차트 및 리스크 진단")
+        holding_options_port = [f"{h['name']} ({h['code']}) | 평단가: {h['avg_buy_price']:,.0f}원 | 수익률: {h['profit_rate']:+.2f}%" for h in holdings]
+        selected_port_idx = st.selectbox(
+            "차트를 확인할 보유 종목을 선택하세요",
+            range(len(holdings)),
+            format_func=lambda i: holding_options_port[i],
+            key="portfolio_holding_chart_select"
+        )
+
+        selected_port_h = holdings[selected_port_idx]
+        with st.expander(f"📊 {selected_port_h['name']} ({selected_port_h['code']}) 실시간 차트 & 지표 상세", expanded=True):
+            render_interactive_stock_chart(
+                api_client=api,
+                screener_engine=screener,
+                code=selected_port_h["code"],
+                name=selected_port_h["name"],
+                avg_buy_price=float(selected_port_h.get("avg_buy_price", 0)),
+                profit_rate=float(selected_port_h.get("profit_rate", 0))
+            )
+
 # ==============================================================================
-# 4. 당일 주문 및 체결 내역 페이지
+# 4. 백테스팅 페이지 (FinanceDataReader)
+# ==============================================================================
+elif st.session_state["nav_page"] == "backtest":
+    st.title("🧪 Backtest • 알고리즘 백테스팅")
+    st.caption("FinanceDataReader를 활용하여 구현된 종가 매수(15:15) 및 리스크 관리 전략을 과거 데이터로 검증합니다.")
+
+    # 백테스팅 파라미터 폼
+    with st.expander("⚙️ 백테스팅 설정 파라미터", expanded=True):
+        col_b1, col_b2 = st.columns(2)
+        with col_b1:
+            bt_start = st.date_input(
+                "시작일자",
+                value=today() - datetime.timedelta(days=180),
+                max_value=today() - datetime.timedelta(days=10)
+            )
+            bt_capital = st.number_input(
+                "초기 투자 원금 (원)",
+                min_value=1000000,
+                max_value=1000000000,
+                value=10000000,
+                step=1000000
+            )
+            bt_max_hold = st.number_input(
+                "최대 보유 종목 수",
+                min_value=1,
+                max_value=20,
+                value=5,
+                step=1
+            )
+            bt_target_profit = st.number_input(
+                "목표 익절 수익률 (예: 0.05 = +5%)",
+                min_value=0.01,
+                max_value=0.50,
+                value=0.05,
+                step=0.01
+            )
+
+        with col_b2:
+            bt_end = st.date_input(
+                "종료일자",
+                value=today(),
+                max_value=today()
+            )
+            bt_budget = st.number_input(
+                "1종목당 최대 매수 예산 (원)",
+                min_value=100000,
+                max_value=100000000,
+                value=1000000,
+                step=100000
+            )
+            bt_stop_loss = st.number_input(
+                "손절 기준 수익률 (예: -0.03 = -3%)",
+                min_value=-0.50,
+                max_value=-0.01,
+                value=-0.03,
+                step=0.01
+            )
+            universe_mode = st.selectbox(
+                "백테스트 유니버스 선택",
+                ["관심종목 100개 전체 (Watchlist)", "대형 우량주 10개 (Top 10)", "직접 입력"]
+            )
+
+        # 유니버스 구성
+        if universe_mode == "관심종목 100개 전체 (Watchlist)":
+            bt_universe = config.CURRENT_SETTINGS.get("watchlist", [])
+        elif universe_mode == "대형 우량주 10개 (Top 10)":
+            bt_universe = [
+                {"code": "005930", "name": "삼성전자"},
+                {"code": "000660", "name": "SK하이닉스"},
+                {"code": "373220", "name": "LG에너지솔루션"},
+                {"code": "207940", "name": "삼성바이오로직스"},
+                {"code": "005380", "name": "현대차"},
+                {"code": "000270", "name": "기아"},
+                {"code": "068270", "name": "셀트리온"},
+                {"code": "035420", "name": "NAVER"},
+                {"code": "105560", "name": "KB금융"},
+                {"code": "055550", "name": "신한지주"}
+            ]
+        else:
+            custom_codes_raw = st.text_input("종목코드 입력 (쉼표로 구분)", value="005930,000660,035420,005380")
+            bt_universe = [{"code": c.strip(), "name": c.strip()} for c in custom_codes_raw.split(",") if c.strip()]
+
+        st.caption(f"선택된 유니버스 종목 수: **{len(bt_universe)}개**")
+
+        btn_run_bt = st.button("🚀 백테스팅 실행", type="primary", use_container_width=True)
+
+    # 백테스팅 실행 처리
+    if btn_run_bt:
+        if bt_start >= bt_end:
+            st.error("⚠️ 시작일이 종료일보다 앞서야 합니다.")
+        else:
+            prog_bar = st.progress(0, text="데이터 다운로드 및 백테스팅 준비 중...")
+            
+            def update_progress(val):
+                prog_bar.progress(int(val * 100), text=f"백테스팅 시뮬레이션 진행 중... ({int(val * 100)}%)")
+
+            tester = Backtester(
+                start_date=bt_start.strftime("%Y-%m-%d"),
+                end_date=bt_end.strftime("%Y-%m-%d"),
+                universe=bt_universe,
+                initial_capital=float(bt_capital),
+                budget_per_stock=float(bt_budget),
+                max_holdings=int(bt_max_hold),
+                target_profit_rate=float(bt_target_profit),
+                stop_loss_rate=float(bt_stop_loss)
+            )
+
+            with st.spinner("과거 데이터 기반 전략 시뮬레이션 계산 중..."):
+                bt_result = tester.run(progress_callback=update_progress)
+                prog_bar.progress(100, text="백테스팅 완료!")
+                st.session_state["bt_result"] = bt_result
+                st.session_state["bt_params"] = {
+                    "start": bt_start.strftime("%Y-%m-%d"),
+                    "end": bt_end.strftime("%Y-%m-%d"),
+                    "initial": bt_capital,
+                    "universe_count": len(bt_universe)
+                }
+                time.sleep(0.5)
+                st.rerun()
+
+    # 백테스팅 결과 표시
+    if "bt_result" in st.session_state:
+        res = st.session_state["bt_result"]
+        if "error" in res:
+            st.error(f"❌ {res['error']}")
+        else:
+            summary_bt = res["summary"]
+            daily_eq = res["daily_equity"]
+            trades_df = res["trade_history"]
+            bench_df = res.get("benchmark_df")
+            params = st.session_state.get("bt_params", {})
+
+            st.divider()
+            st.subheader(f"📊 백테스팅 성과 결과 ({params.get('start')} ~ {params.get('end')})")
+
+            # 핵심 성과 지표 카드
+            m1, m2, m3, m4, m5, m6 = st.columns(6)
+            with m1:
+                ret = summary_bt["total_return_pct"]
+                st.metric("누적 수익률", f"{ret:+.2f}%", delta=f"{ret:+.2f}%")
+            with m2:
+                cagr = summary_bt["cagr_pct"]
+                st.metric("연평균 수익률 (CAGR)", f"{cagr:+.2f}%")
+            with m3:
+                mdd = summary_bt["mdd_pct"]
+                st.metric("최대 낙폭 (MDD)", f"{mdd:.2f}%", delta=f"{mdd:.2f}%", delta_color="inverse")
+            with m4:
+                win_r = summary_bt["win_rate"]
+                st.metric("매매 승률 (Win Rate)", f"{win_r:.1f}%")
+            with m5:
+                pf = summary_bt["profit_factor"]
+                pf_str = f"{pf:.2f}" if pf < 100 else "999+"
+                st.metric("손익비 (Profit Factor)", pf_str)
+            with m6:
+                st.metric("총 실현/평가손익", f"{summary_bt['total_profit_krw']:+,.0f}원")
+
+            # 인터랙티브 차트 (자산 곡선 vs 벤치마크 & 낙폭)
+            st.write("### 📈 포트폴리오 수익률 곡선 (Equity Curve vs KOSPI)")
+            
+            fig_bt = make_subplots(
+                rows=2, cols=1,
+                shared_xaxes=True,
+                vertical_spacing=0.06,
+                row_heights=[0.7, 0.3],
+                subplot_titles=("포트폴리오 누적 수익률 vs KOSPI 벤치마크", "Drawdown (낙폭)")
+            )
+
+            # 포트폴리오 수익률
+            fig_bt.add_trace(
+                go.Scatter(
+                    x=pd.to_datetime(daily_eq["date"]),
+                    y=daily_eq["return_pct"],
+                    name="전략 포트폴리오",
+                    line=dict(color="#38bdf8", width=2.5)
+                ),
+                row=1, col=1
+            )
+
+            # KOSPI 벤치마크
+            if bench_df is not None and not bench_df.empty:
+                # 거래일 매칭
+                merged_bench = pd.merge(daily_eq, bench_df, on="date", how="left")
+                fig_bt.add_trace(
+                    go.Scatter(
+                        x=pd.to_datetime(merged_bench["date"]),
+                        y=merged_bench["benchmark_return"],
+                        name="KOSPI 지수",
+                        line=dict(color="#94a3b8", width=1.5, dash="dot")
+                    ),
+                    row=1, col=1
+                )
+
+            # 낙폭 차트 (Drawdown)
+            fig_bt.add_trace(
+                go.Scatter(
+                    x=pd.to_datetime(daily_eq["date"]),
+                    y=daily_eq["drawdown"],
+                    name="Drawdown",
+                    fill="tozeroy",
+                    fillcolor="rgba(239, 68, 68, 0.2)",
+                    line=dict(color="#ef4444", width=1.5)
+                ),
+                row=2, col=1
+            )
+
+            fig_bt.update_layout(
+                height=600,
+                template="plotly_dark",
+                margin=dict(l=20, r=20, t=40, b=20),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            )
+            st.plotly_chart(fig_bt, use_container_width=True)
+
+            # 일별 자산 및 보유 종목 수 현황
+            col_eq1, col_eq2 = st.columns([1, 1])
+            with col_eq1:
+                st.write("### 💼 자산 구성 추이 (현금 vs 주식)")
+                fig_comp = go.Figure()
+                fig_comp.add_trace(go.Scatter(
+                    x=pd.to_datetime(daily_eq["date"]),
+                    y=daily_eq["cash"],
+                    name="현금 잔고",
+                    stackgroup="one",
+                    line=dict(color="#10b981")
+                ))
+                fig_comp.add_trace(go.Scatter(
+                    x=pd.to_datetime(daily_eq["date"]),
+                    y=daily_eq["stock_eval"],
+                    name="주식 평가액",
+                    stackgroup="one",
+                    line=dict(color="#6366f1")
+                ))
+                fig_comp.update_layout(
+                    template="plotly_dark",
+                    height=350,
+                    margin=dict(l=20, r=20, t=30, b=20),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                )
+                st.plotly_chart(fig_comp, use_container_width=True)
+
+            with col_eq2:
+                st.write("### 🎯 승패 비율 및 거래 통계")
+                win_cnt = summary_bt["win_count"]
+                loss_cnt = summary_bt["loss_count"]
+                if win_cnt + loss_cnt > 0:
+                    fig_pie = go.Figure(go.Pie(
+                        labels=["익절/수익 매도", "손절/손실 매도"],
+                        values=[win_cnt, loss_cnt],
+                        hole=0.4,
+                        marker_colors=["#10b981", "#ef4444"]
+                    ))
+                    fig_pie.update_layout(
+                        template="plotly_dark",
+                        height=350,
+                        margin=dict(l=20, r=20, t=30, b=20)
+                    )
+                    st.plotly_chart(fig_pie, use_container_width=True)
+                else:
+                    st.info("청산된 거래 내역이 없습니다.")
+
+            # 매매 이력 상세 테이블
+            st.divider()
+            st.subheader(f"📋 백테스트 매매 상세 내역 (총 {len(trades_df)}건)")
+            if not trades_df.empty:
+                disp_trades = trades_df.copy()
+                disp_trades["price"] = disp_trades["price"].apply(lambda x: f"{x:,.0f}원")
+                disp_trades["amount"] = disp_trades["amount"].apply(lambda x: f"{x:,.0f}원")
+                disp_trades["profit_krw"] = disp_trades["profit_krw"].apply(lambda x: f"{x:+,.0f}원" if x != 0 else "-")
+                disp_trades["profit_pct"] = disp_trades["profit_pct"].apply(lambda x: f"{x:+.2f}%" if x != 0 else "-")
+
+                st.dataframe(disp_trades, use_container_width=True)
+
+                # CSV 다운로드 버튼
+                csv_data = trades_df.to_csv(index=False).encode('utf-8-sig')
+                st.download_button(
+                    label="📥 매매 내역 CSV 다운로드",
+                    data=csv_data,
+                    file_name=f"backtest_trades_{params.get('start')}_{params.get('end')}.csv",
+                    mime="text/csv"
+                )
+            else:
+                st.info("백테스트 기간 내 발생한 매매 내역이 없습니다.")
+
+# ==============================================================================
+# 5. 당일 주문 및 체결 내역 페이지
 # ==============================================================================
 elif st.session_state["nav_page"] == "execution":
     st.title("⚡ Execution • 실시간 주문 및 체결 내역")
@@ -612,13 +1117,12 @@ elif st.session_state["nav_page"] == "execution":
         st.dataframe(o_df, use_container_width=True)
 
 # ==============================================================================
-# 5. 매매 이력 & 수익 분석 페이지
+# 6. 매매 이력 & 수익 분석 페이지
 # ==============================================================================
 elif st.session_state["nav_page"] == "history":
     st.title("📜 History & Profit • 매매 이력 및 수익 분석")
     st.caption(f"서버 시각: {now_str()} (KST)")
 
-    # 기간 선택 UI
     col_date1, col_date2, col_date3 = st.columns([1.5, 1.5, 1])
     with col_date1:
         start_date = st.date_input(
@@ -638,7 +1142,6 @@ elif st.session_state["nav_page"] == "history":
         if st.button("🔍 조회", key="btn_history_search", type="primary", use_container_width=True):
             st.rerun()
 
-    # 날짜 검증
     if start_date > end_date:
         st.error("⚠️ 시작일이 종료일보다 늦을 수 없습니다.")
     else:
@@ -647,7 +1150,6 @@ elif st.session_state["nav_page"] == "history":
 
         with st.spinner("매매 이력 조회 중..."):
             result = api.get_trade_history_with_profit(start_str, end_str)
-            # 현재 보유 종목의 미실현 손익(평가손익) 계산
             balance_data = api.get_account_balance()
             holdings_data = balance_data.get("holdings", [])
             unrealized_profit = 0.0
@@ -675,7 +1177,6 @@ elif st.session_state["nav_page"] == "history":
         profit_by_stock = result["profit_by_stock"]
         total_profit = realized_profit + unrealized_profit
 
-        # 상단 요약 카드
         st.subheader("📊 손익 요약")
         col1, col2, col3, col4, col5, col6 = st.columns(6)
         with col1:
@@ -693,7 +1194,6 @@ elif st.session_state["nav_page"] == "history":
 
         st.divider()
 
-        # 미실현 손익 (보유 종목 평가손익) 섹션
         st.subheader("💼 미실현 손익 (현재 보유 종목 평가)")
         if unrealized_by_stock:
             u_df = pd.DataFrame([
@@ -714,7 +1214,6 @@ elif st.session_state["nav_page"] == "history":
             u_df["수익률(%)"] = u_df["수익률(%)"].apply(lambda x: f"{x:+.2f}%")
             st.dataframe(u_df, use_container_width=True)
 
-            # 미실현 손익 바 차트
             fig_unreal = go.Figure(go.Bar(
                 x=[v["name"] for v in unrealized_by_stock.values()],
                 y=[v["profit_loss"] for v in unrealized_by_stock.values()],
@@ -735,7 +1234,6 @@ elif st.session_state["nav_page"] == "history":
 
         st.divider()
 
-        # 종목별 실현 손익 테이블 (매도 수량이 0인 종목 제외)
         sold_stocks = {k: v for k, v in profit_by_stock.items() if v["sell_qty"] > 0}
         if sold_stocks:
             st.subheader("📈 종목별 실현 손익")
@@ -756,7 +1254,6 @@ elif st.session_state["nav_page"] == "history":
             pbs_df["실현손익(원)"] = pbs_df["실현손익(원)"].apply(lambda x: f"{x:+,.0f}")
             st.dataframe(pbs_df, use_container_width=True)
 
-            # 종목별 실현 손익 바 차트
             fig_profit = go.Figure(go.Bar(
                 x=[v["name"] for v in sold_stocks.values()],
                 y=[v["profit"] for v in sold_stocks.values()],
@@ -777,13 +1274,11 @@ elif st.session_state["nav_page"] == "history":
 
         st.divider()
 
-        # 전체 매매 이력 테이블
         st.subheader("📋 매매 이력 상세")
         if not orders:
             st.info("선택 기간 내 매매 이력이 없습니다.")
         else:
             h_df = pd.DataFrame(orders)
-            # 표시용 컬럼 정리
             display_cols = ["order_date", "order_time", "name", "code", "buy_sell", "order_qty", "order_price", "ccld_qty", "ccld_price", "status"]
             h_df = h_df[[c for c in display_cols if c in h_df.columns]].copy()
             h_df.columns = ["주문일", "주문시각", "종목명", "코드", "구분", "주문수량", "주문가", "체결수량", "체결가", "상태"]
@@ -793,7 +1288,6 @@ elif st.session_state["nav_page"] == "history":
             h_df["체결금액(원)"] = h_df["체결금액(원)"].apply(lambda x: f"{x:,.0f}")
             st.dataframe(h_df, use_container_width=True)
 
-            # 매수/매도 비율 파이 차트
             buy_count_total = len([o for o in orders if o["buy_sell"] == "매수"])
             sell_count_total = len([o for o in orders if o["buy_sell"] == "매도"])
             if buy_count_total + sell_count_total > 0:
@@ -811,7 +1305,7 @@ elif st.session_state["nav_page"] == "history":
                 st.plotly_chart(fig_pie, use_container_width=True)
 
 # ==============================================================================
-# 6. 전략 및 시스템 설정 페이지
+# 7. 전략 및 시스템 설정 페이지
 # ==============================================================================
 elif st.session_state["nav_page"] == "settings":
     st.title("⚙️ Strategy & System Settings • 전략 파라미터 및 환경 설정")
@@ -849,8 +1343,8 @@ elif st.session_state["nav_page"] == "settings":
                 step=0.01
             )
             f_time = st.text_input(
-                "개장 전 자동 스크리닝 시각 (KST)",
-                value=config.CURRENT_SETTINGS.get("premarket_time", "08:30")
+                "종가 매수 스크리닝 시각 (KST)",
+                value=config.CURRENT_SETTINGS.get("premarket_time", "15:15")
             )
 
         st.divider()

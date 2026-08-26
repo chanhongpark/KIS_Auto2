@@ -70,12 +70,10 @@ class TelegramNotifier:
                 logger.error(f"텔레그램 알림 전송 실패: HTTP {resp.status_code} - {data.get('description', '알 수 없는 오류')}")
                 return False
         except requests.exceptions.SSLError as e:
-            logger.error(f"텔레그램 SSL 인증 오류 (네트워크/방화벽 문제 가능): {e}")
-            logger.error("LG 사내 네트워크에서 api.telegram.org 접속이 차단될 수 있습니다. VPN 또는 외부 네트워크에서 실행해 주세요.")
+            logger.error(f"텔레그램 SSL 인증 오류: {e}")
             return False
         except requests.exceptions.ConnectionError as e:
-            logger.error(f"텔레그램 연결 실패 (네트워크 차단 가능): {e}")
-            logger.error("LG 사내 네트워크에서 api.telegram.org 접속이 차단될 수 있습니다. VPN 또는 외부 네트워크에서 실행해 주세요.")
+            logger.error(f"텔레그램 연결 실패: {e}")
             return False
         except Exception as e:
             logger.error(f"텔레그램 알림 전송 중 예외 발생: {e}")
@@ -90,23 +88,10 @@ class TelegramNotifier:
         order_no: str = "",
         order_type: str = "시장가"
     ) -> bool:
-        """
-        매수 주문 성공 알림 전송
-
-        Args:
-            name: 종목명
-            code: 종목코드
-            qty: 주문 수량
-            price: 주문 가격
-            order_no: 주문 번호
-            order_type: 주문 유형 (시장가/지정가)
-
-        Returns:
-            bool: 전송 성공 여부
-        """
+        """매수 주문 성공 알림 전송"""
         total_amount = qty * price
         text = (
-            "🟢 <b>매수 주문 성공</b>\n"
+            "🟢 <b>종가 매수 주문 성공</b>\n"
             "━━━━━━━━━━━━━━━━━━\n"
             f"📌 <b>종목:</b> {name} ({code})\n"
             f"🔢 <b>수량:</b> {qty:,}주\n"
@@ -133,25 +118,9 @@ class TelegramNotifier:
         reasons: List[str],
         is_urgent: bool = False
     ) -> bool:
-        """
-        매도 추천 알림 전송
-
-        Args:
-            name: 종목명
-            code: 종목코드
-            holding_qty: 보유 수량
-            avg_buy_price: 평균 매입가
-            current_price: 현재가
-            profit_rate: 수익률 (%)
-            profit_loss: 평가 손익 (원)
-            reasons: 매도 추천 사유 목록
-            is_urgent: 긴급 여부 (손절 등)
-
-        Returns:
-            bool: 전송 성공 여부
-        """
+        """매도 추천 알림 전송"""
         icon = "🚨" if is_urgent else "⚠️"
-        title = "매도 추천 (긴급)" if is_urgent else "매도 추천"
+        title = "긴급 손절 알림" if is_urgent else "매도 추천 신호"
         text = (
             f"{icon} <b>{title}</b>\n"
             "━━━━━━━━━━━━━━━━━━\n"
@@ -180,20 +149,7 @@ class TelegramNotifier:
         order_no: str = "",
         order_type: str = "시장가"
     ) -> bool:
-        """
-        매도 주문 성공 알림 전송
-
-        Args:
-            name: 종목명
-            code: 종목코드
-            qty: 주문 수량
-            price: 주문 가격
-            order_no: 주문 번호
-            order_type: 주문 유형 (시장가/지정가)
-
-        Returns:
-            bool: 전송 성공 여부
-        """
+        """매도 주문 성공 알림 전송"""
         total_amount = qty * price
         text = (
             "🔴 <b>매도 주문 성공</b>\n"
@@ -219,43 +175,36 @@ class TelegramNotifier:
         buy_list: Optional[List[Dict[str, Any]]] = None,
         sell_list: Optional[List[Dict[str, Any]]] = None
     ) -> bool:
-        """
-        일일 스크리닝 요약 알림 전송
-
-        Args:
-            buy_count: 매수 추천 종목 수
-            sell_count: 매도 추천 종목 수
-            holdings_count: 보유 종목 수
-            buy_list: 매수 추천 목록 (선택)
-            sell_list: 매도 추천 목록 (선택)
-
-        Returns:
-            bool: 전송 성공 여부
-        """
+        """일일 스크리닝 요약 알림 전송 (15:15 종가 매수 및 매도 현황)"""
         text = (
-            "📊 <b>일일 스크리닝 요약</b>\n"
+            "📊 <b>15:15 종가 스크리닝 요약</b>\n"
             "━━━━━━━━━━━━━━━━━━\n"
-            f"🟢 <b>매수 추천:</b> {buy_count}건\n"
-            f"🔴 <b>매도 추천:</b> {sell_count}건\n"
-            f"📦 <b>보유 종목:</b> {holdings_count}개\n"
+            f"🟢 <b>종가 매수 추천:</b> {buy_count}건\n"
+            f"🔴 <b>매도 신호 감지:</b> {sell_count}건\n"
+            f"📦 <b>현재 보유 종목:</b> {holdings_count}개\n"
         )
 
         if buy_list:
-            text += "\n<b>🟢 매수 추천 종목:</b>\n"
+            text += "\n<b>🟢 종가 매수 추천 종목:</b>\n"
             for item in buy_list[:5]:
                 buy_tag = "🔄 추가매수" if item.get("is_additional_buy") else "🆕 신규매수"
+                score = item.get("score", 0)
+                t_score = item.get("trend_score", 0)
+                s_score = item.get("supply_score", 0)
+                m_score = item.get("momentum_score", 0)
                 text += (
-                    f"• {buy_tag} {item.get('name', '')} ({item.get('code', '')}) "
-                    f"| {item.get('current_price', 0):,.0f}원 "
-                    f"| 점수 {item.get('score', 0)}점\n"
+                    f"• {buy_tag} <b>{item.get('name', '')}</b> ({item.get('code', '')})\n"
+                    f"  💰 {item.get('current_price', 0):,.0f}원 | 🎯 총 {score}점 (추세 {t_score}/수급 {s_score}/모멘텀 {m_score})\n"
                 )
 
         if sell_list:
             text += "\n<b>🔴 매도 추천 종목:</b>\n"
             for item in sell_list[:5]:
+                urgent_tag = "🚨 [긴급]" if item.get("is_urgent") else "⚠️"
+                sell_type = item.get("sell_type", "매도")
                 text += (
-                    f"• {item.get('name', '')} ({item.get('code', '')}) "
-                    f"| 수익률 {item.get('profit_rate', 0):+.2f}%\n"
+                    f"• {urgent_tag} <b>{item.get('name', '')}</b> ({item.get('code', '')}) "
+                    f"| {sell_type} | 수익률 {item.get('profit_rate', 0):+.2f}%\n"
                 )
 
         text += "━━━━━━━━━━━━━━━━━━\n"
