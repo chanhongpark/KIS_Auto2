@@ -1348,6 +1348,38 @@ elif st.session_state["nav_page"] == "settings":
             )
 
         st.divider()
+        st.write("**🛡️ 시장 국면 필터 (Market Regime Filter)**")
+        c_r1, c_r2 = st.columns(2)
+        with c_r1:
+            f_regime_enabled = st.toggle("시장 국면 필터 활성화", value=config.CURRENT_SETTINGS.get("market_regime_filter_enabled", True))
+            f_regime_block = st.toggle("약세 국면 신규 진입 전면 차단", value=config.CURRENT_SETTINGS.get("market_regime_block_weak", False))
+        with c_r2:
+            f_regime_cutoff_normal = st.number_input("정상 국면 매수 점수 컷오프", min_value=0, max_value=100, value=int(config.CURRENT_SETTINGS.get("market_regime_cutoff_normal", 45)), step=1)
+            f_regime_cutoff_weak = st.number_input("약세 국면 매수 점수 컷오프", min_value=0, max_value=100, value=int(config.CURRENT_SETTINGS.get("market_regime_cutoff_weak", 70)), step=1)
+        st.caption("약세 국면(지수가 20일 이동평균선 아래)에서는 매수 점수 컷오프를 상향(45→70)하거나 신규 진입을 차단합니다.")
+
+        st.divider()
+        st.write("**⏳ 손절 종목 쿨다운 (Cool-down)**")
+        c_c1, c_c2 = st.columns(2)
+        with c_c1:
+            f_cooldown_enabled = st.toggle("손절 쿨다운 활성화", value=config.CURRENT_SETTINGS.get("cooldown_enabled", True))
+        with c_c2:
+            f_cooldown_days = st.number_input("쿨다운 기간 (거래일)", min_value=1, max_value=10, value=int(config.CURRENT_SETTINGS.get("cooldown_days", 4)), step=1)
+        st.caption("손절 청산된 종목은 쿨다운 기간 동안 재매수를 금지하여 단기 횡보장 휩쏘 비용을 절감합니다.")
+
+        st.divider()
+        st.write("**📉 ATR 동적 손절 (변동성 기반 손절가)**")
+        c_a1, c_a2 = st.columns(2)
+        with c_a1:
+            f_atr_enabled = st.toggle("ATR 동적 손절 활성화", value=config.CURRENT_SETTINGS.get("atr_stop_loss_enabled", True))
+            f_atr_multiple = st.number_input("ATR 배수", min_value=0.5, max_value=5.0, value=float(config.CURRENT_SETTINGS.get("atr_stop_loss_multiple", 2.0)), step=0.1)
+        with c_a2:
+            f_atr_min = st.number_input("최소 손절률 (소수)", min_value=-0.20, max_value=-0.001, value=float(config.CURRENT_SETTINGS.get("atr_stop_loss_min_pct", -0.05)), step=0.01)
+            f_atr_max = st.number_input("최대 손절률 (소수)", min_value=-0.20, max_value=-0.001, value=float(config.CURRENT_SETTINGS.get("atr_stop_loss_max_pct", -0.01)), step=0.01)
+        f_atr_lowbreak = st.toggle("당일 저가가 손절선 이탈 시 손절", value=config.CURRENT_SETTINGS.get("atr_stop_loss_use_low_break", True))
+        st.caption("진입가 - (2 × ATR)을 손절선으로 사용하여 고정 -3% 대신 정상적인 시장 노이즈에 털리는 현상을 방지합니다.")
+
+        st.divider()
         st.write(f"**관심/스크리닝 유니버스 종목 관리 (현재 {len(config.CURRENT_SETTINGS.get('watchlist', []))}개 종목)**")
         wl = config.CURRENT_SETTINGS.get("watchlist", [])
         wl_text = "\n".join([f"{w.get('code')},{w.get('name')},{w.get('market', 'KOSPI')}" for w in wl])
@@ -1376,7 +1408,18 @@ elif st.session_state["nav_page"] == "settings":
                 "stop_loss_rate": f_loss,
                 "max_buy_budget_per_stock": f_budget,
                 "premarket_time": f_time,
-                "watchlist": new_wl
+                "watchlist": new_wl,
+                "market_regime_filter_enabled": f_regime_enabled,
+                "market_regime_block_weak": f_regime_block,
+                "market_regime_cutoff_normal": f_regime_cutoff_normal,
+                "market_regime_cutoff_weak": f_regime_cutoff_weak,
+                "cooldown_enabled": f_cooldown_enabled,
+                "cooldown_days": f_cooldown_days,
+                "atr_stop_loss_enabled": f_atr_enabled,
+                "atr_stop_loss_multiple": f_atr_multiple,
+                "atr_stop_loss_min_pct": f_atr_min,
+                "atr_stop_loss_max_pct": f_atr_max,
+                "atr_stop_loss_use_low_break": f_atr_lowbreak
             }
             config.save_settings(new_settings)
             config.CURRENT_SETTINGS = new_settings

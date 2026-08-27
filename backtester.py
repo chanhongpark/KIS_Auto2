@@ -87,6 +87,17 @@ class Backtester:
     def run(self, progress_callback=None) -> Dict[str, Any]:
         """screener.py의 공통 알고리즘 함수를 사용하여 백테스팅 실행"""
         logger.info(f"=== [Backtester] 백테스트 시작: {self.start_date} ~ {self.end_date} ===")
+
+        # 백테스트 시작 시 쿨다운 임시 파일 초기화 (이전 실행 잔여 데이터 제거)
+        import os as _os
+        from screener import COOLDOWN_FILE as _cooldown_file
+        if _os.path.exists(_cooldown_file):
+            try:
+                _os.remove(_cooldown_file)
+                logger.info("백테스트 쿨다운 임시 파일 초기화 완료")
+            except Exception as e:
+                logger.warning(f"백테스트 쿨다운 파일 초기화 실패: {e}")
+
         universe_data = self.fetch_universe_data(progress_callback=progress_callback)
 
         if not universe_data:
@@ -106,6 +117,7 @@ class Backtester:
         holdings = {}  # code -> {qty, avg_buy_price, buy_date, holding_days, name}
         trade_history = []
         daily_equity = []
+        cooldown_map = {}  # code -> 손절 청산일 (백테스트 내부 쿨다운 추적)
 
         total_days = len(trading_dates)
 
@@ -158,7 +170,9 @@ class Backtester:
                         df=None,
                         is_recently_bought=False,
                         stop_loss_rate=self.stop_loss_rate,
-                        target_profit_rate=self.target_profit_rate
+                        target_profit_rate=self.target_profit_rate,
+                        current_date=current_date,
+                        use_file_cooldown=True  # 백테스팅: 파일 기반 쿨다운
                     )
                     sell_price = min(close_price, avg_price * (1 + self.stop_loss_rate))
 
@@ -170,7 +184,9 @@ class Backtester:
                         df=None,
                         is_recently_bought=False,
                         stop_loss_rate=self.stop_loss_rate,
-                        target_profit_rate=self.target_profit_rate
+                        target_profit_rate=self.target_profit_rate,
+                        current_date=current_date,
+                        use_file_cooldown=True  # 백테스팅: 파일 기반 쿨다운
                     )
                     sell_price = max(close_price, avg_price * (1 + self.target_profit_rate))
 
@@ -184,7 +200,9 @@ class Backtester:
                         df=df_tech,
                         is_recently_bought=is_recently_bought,
                         stop_loss_rate=self.stop_loss_rate,
-                        target_profit_rate=self.target_profit_rate
+                        target_profit_rate=self.target_profit_rate,
+                        current_date=current_date,
+                        use_file_cooldown=True  # 백테스팅: 파일 기반 쿨다운
                     )
                     sell_price = close_price
 
@@ -217,6 +235,10 @@ class Backtester:
                         "reason": sell_reason
                     })
 
+                    # 손절 청산 시 쿨다운 등록 (백테스트 내부 추적)
+                    if "손절" in sell_type and pos["qty"] <= sell_qty:
+                        cooldown_map[code] = current_date
+
                     pos["qty"] -= sell_qty
                     if pos["qty"] <= 0:
                         to_remove.append(code)
@@ -233,11 +255,41 @@ class Backtester:
                 held_codes = set(holdings.keys())
                 buy_candidates = []
 
+                # 시장 국면 필터: 첫 번째 종목의 20일선 대비 위치로 시장 국면 근사 판단
+                market_regime = None
+                if config.CURRENT_SETTINGS.get("market_regime_filter_enabled", True):
+                    first_code = next(iter(universe_data))
+                    first_info = universe_data[first_code]
+                    first_df = first_info["df"]
+                    first_sub = first_df[first_df["date"] <= current_date]
+                    if len(first_sub) >= 25:
+                        first_candles = first_sub.tail(65).to_dict("records")
+                        first_df_tech = self.screener.calculate_technical_indicators(first_candles, is_intraday=False)
+                        if first_df_tech is not None and len(first_df_tech) >= 20:
+                            last = first_df_tech.iloc[-1]
+                            ma20 = float(last["ma20"]) if not pd.isna(last["ma20"]) else 0
+                            close = float(last["close"])
+                            if ma20 > 0:
+                                regime = "WEAK" if close < ma20 else "NORMAL"
+                                market_regime = {"regime": regime, "below_ma20": close < ma20, "downtrend": False}
+
                 for code, stock_info in universe_data.items():
                     df_stock = stock_info["df"]
                     sub_df = df_stock[df_stock["date"] <= current_date]
                     if len(sub_df) < 25:
                         continue
+
+                    # 손절 쿨다운 기간 내 종목 재매수 차단
+                    if config.CURRENT_SETTINGS.get("cooldown_enabled", True) and code in cooldown_map:
+                        cooldown_days = int(config.CURRENT_SETTINGS.get("cooldown_days", 4))
+                        try:
+                            from datetime import datetime as dt
+                            stop_dt = dt.strptime(cooldown_map[code], "%Y%m%d")
+                            cur_dt = dt.strptime(current_date, "%Y%m%d")
+                            if (cur_dt - stop_dt).days < cooldown_days:
+                                continue
+                        except (ValueError, TypeError):
+                            continue
 
                     candles = sub_df.tail(65).to_dict("records")
                     df_tech = self.screener.calculate_technical_indicators(candles, is_intraday=False)
@@ -248,7 +300,10 @@ class Backtester:
                         code=code,
                         name=stock_info["name"],
                         held_codes=held_codes,
-                        budget=self.budget_per_stock
+                        budget=self.budget_per_stock,
+                        market_regime=market_regime,
+                        current_date=current_date,
+                        use_file_cooldown=True  # 백테스팅: 파일 기반 쿨다운
                     )
 
                     if buy_eval:
@@ -361,6 +416,16 @@ class Backtester:
                 benchmark_df = kospi[["date", "Close", "benchmark_return"]].rename(columns={"Close": "kospi_close"})
         except Exception as e:
             logger.warning(f"KOSPI 벤치마크 데이터 로드 실패: {e}")
+
+        # 백테스트 종료 시 쿨다운 임시 파일 정리 (다음 실행에 영향 없도록)
+        import os as _os2
+        from screener import COOLDOWN_FILE as _cooldown_file2
+        if _os2.path.exists(_cooldown_file2):
+            try:
+                _os2.remove(_cooldown_file2)
+                logger.info("백테스트 쿨다운 임시 파일 정리 완료")
+            except Exception as e:
+                logger.warning(f"백테스트 쿨다운 파일 정리 실패: {e}")
 
         return {
             "summary": {

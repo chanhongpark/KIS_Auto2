@@ -92,6 +92,24 @@ DEFAULT_SETTINGS = {
     "atr_stop_multiple": 2.0,               # ATR 기반 손절 배수 (2배 ATR)
     "max_position_ratio": 0.3,              # 1종목당 최대 포지션 비율 (계좌 대비 30%)
     "min_position_ratio": 0.05,             # 1종목당 최소 포지션 비율 (계좌 대비 5%)
+
+    # --- 시장 국면 필터 (Market Regime Filter) ---
+    "market_regime_filter_enabled": True,   # 시장 국면 필터 활성화
+    "market_regime_ma_period": 20,          # 시장 국면 판단 이동평균 기간 (20일)
+    "market_regime_cutoff_normal": 45,      # 정상 국면 매수 점수 컷오프
+    "market_regime_cutoff_weak": 70,        # 약세 국면 매수 점수 컷오프 (상향)
+    "market_regime_block_weak": False,       # 약세 국면 신규 진입 전면 차단 여부
+
+    # --- 손절 종목 쿨다운 (Cool-down) ---
+    "cooldown_enabled": True,               # 손절 종목 쿨다운 활성화
+    "cooldown_days": 4,                     # 손절 후 재매수 금지 기간 (거래일 기준 3~5일)
+
+    # --- ATR 동적 손절 (변동성 기반 손절가) ---
+    "atr_stop_loss_enabled": True,          # ATR 기반 동적 손절 활성화
+    "atr_stop_loss_multiple": 2.0,          # ATR 손절 배수 (진입가 - 2×ATR)
+    "atr_stop_loss_min_pct": -0.05,         # ATR 손절 최소 허용 손실률 (-5% 하한)
+    "atr_stop_loss_max_pct": -0.01,         # ATR 손절 최대 허용 손실률 (-1% 상한)
+    "atr_stop_loss_use_low_break": True,    # 당일 저가 이탈 시 손절 적용 여부
     "watchlist": [
         {"code": "005930", "name": "삼성전자", "market": "KOSPI"},
         {"code": "000660", "name": "SK하이닉스", "market": "KOSPI"},
