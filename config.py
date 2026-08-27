@@ -70,6 +70,28 @@ DEFAULT_SETTINGS = {
     "premarket_time": "08:30",              # 개장 전 자동 스크리닝 시각 (KST)
     "auto_execute_orders": False,           # 주문 완전 자동화 여부 (False: UI 원클릭 승인)
     "telegram_enabled": False,              # 텔레그램 알림 활성화 여부 (기본: OFF)
+
+    # --- 스크리닝 점수 카테고리별 상한 (Cap) ---
+    "score_cap_trend": 40,                  # 추세군(이동평균) 최대 점수 상한
+    "score_cap_momentum": 30,               # 모멘텀군(RSI, 볼린저) 최대 점수 상한
+    "score_cap_volume": 25,                 # 거래량군 최대 점수 상한
+    "buy_score_threshold": 40,              # 매수 추천 최소 종합 점수
+
+    # --- 실시간 봉 반영 설정 ---
+    "use_realtime_candle": False,           # 실시간 현재가를 일봉에 반영할지 여부 (False: 완성봉만 사용)
+
+    # --- 분할 매도 설정 ---
+    "partial_sell_ratio": 0.5,              # 1차 익절 시 매도 비율 (50%)
+    "trailing_stop_pct": 0.05,              # 트레일링 스탑 비율 (5%)
+    "rsi_overbought_sell": False,           # RSI 과열 시 전량 매도 여부 (False: 분할 매도만)
+
+    # --- 변동성 조절 포지션 사이징 ---
+    "volatility_sizing_enabled": True,      # ATR 기반 변동성 조절 포지션 사이징 활성화
+    "atr_period": 14,                       # ATR 계산 기간
+    "risk_per_trade": 0.01,                 # 1회 거래당 리스크 비율 (계좌 대비 1%)
+    "atr_stop_multiple": 2.0,               # ATR 기반 손절 배수 (2배 ATR)
+    "max_position_ratio": 0.3,              # 1종목당 최대 포지션 비율 (계좌 대비 30%)
+    "min_position_ratio": 0.05,             # 1종목당 최소 포지션 비율 (계좌 대비 5%)
     "watchlist": [
         {"code": "005930", "name": "삼성전자", "market": "KOSPI"},
         {"code": "000660", "name": "SK하이닉스", "market": "KOSPI"},

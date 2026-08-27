@@ -85,7 +85,7 @@ class StockScreener:
         budget: Optional[float] = None
     ) -> Optional[Dict[str, Any]]:
         """
-        계산된 기술적 보조지표 DataFrame을 바탕으로 매수 점수 및 수급 게이트 평가
+        계산된 기술적 보조지표 DataFrame을 바탕으로 매수 점수 및 안전/수급 게이트 평가
         (라이브 스크리너 및 백테스터 공통 단일 원천 함수)
         """
         if df is None or len(df) < 20:
@@ -97,10 +97,37 @@ class StockScreener:
         last = df.iloc[-1]
         prev = df.iloc[-2]
         current_price = float(last["close"])
+        open_price = float(last.get("open", current_price))
+        high_price = float(last.get("high", current_price))
+        low_price = float(last.get("low", current_price))
 
         reasons = []
 
+        # -------------------------------------------------------------
+        # [안전 게이트 1] 이격도 과열 방지 필터 (단기 상투 차단)
+        # -------------------------------------------------------------
+        ma5_val = float(last["ma5"]) if not pd.isna(last["ma5"]) else current_price
+        ma20_val = float(last["ma20"]) if not pd.isna(last["ma20"]) else current_price
+
+        # 5일선 대비 3% 초과 또는 20일선 대비 6% 초과 시 고점 추격 매수로 판정하여 즉시 배제
+        if ma5_val > 0 and (current_price / ma5_val) > 1.03:
+            return None
+        if ma20_val > 0 and (current_price / ma20_val) > 1.06:
+            return None
+
+        # -------------------------------------------------------------
+        # [안전 게이트 2] 캔들 형태 필터 (윗꼬리 매물 출회 차단)
+        # -------------------------------------------------------------
+        total_range = high_price - low_price
+        if total_range > 0:
+            upper_shadow = high_price - max(open_price, current_price)
+            # 윗꼬리가 전체 변동폭의 40% 이상이면 매물 출회 신호로 차단
+            if (upper_shadow / total_range) >= 0.40:
+                return None
+
+        # -------------------------------------------------------------
         # 1. 추세군 점수 산출 (그룹 상한: 최대 30점)
+        # -------------------------------------------------------------
         raw_trend_score = 0
         if prev["ma5"] <= prev["ma20"] and last["ma5"] > last["ma20"]:
             raw_trend_score += 20
@@ -114,7 +141,9 @@ class StockScreener:
 
         trend_score = min(30, raw_trend_score)
 
+        # -------------------------------------------------------------
         # 2. 수급군 점수 및 필수 게이트 검증 (그룹 상한: 최대 25점, 필수 게이트)
+        # -------------------------------------------------------------
         vol_ma20 = float(last["vol_ma20"]) if not pd.isna(last["vol_ma20"]) else 0.0
         adj_volume = float(last["adjusted_volume"]) if not pd.isna(last["adjusted_volume"]) else float(last["volume"])
 
@@ -124,7 +153,8 @@ class StockScreener:
 
         if vol_ma20 > 0:
             vol_ratio = (adj_volume / vol_ma20) * 100
-            if adj_volume >= vol_ma20 * 1.3:
+            # 거래량이 1.3배 이상이면서 4배(400%) 이상 폭증한 이상 급등일은 과열로 배제 (1.3배 ~ 4.0배 사이 유효)
+            if 1.3 <= (adj_volume / vol_ma20) <= 4.0:
                 supply_gate_passed = True
                 supply_score = 25
                 reasons.append(f"⚡ 당일 보정 거래량({adj_volume:,.0f}주)이 20일 평균({vol_ma20:,.0f}주) 대비 {vol_ratio:.0f}% 급증 (수급 게이트 통과, +25점)")
@@ -132,7 +162,9 @@ class StockScreener:
                 supply_gate_passed = False
                 supply_score = 0
 
+        # -------------------------------------------------------------
         # 3. 모멘텀/반등군 점수 산출 (그룹 상한: 최대 25점)
+        # -------------------------------------------------------------
         raw_momentum_score = 0
         rsi = float(last["rsi14"]) if not pd.isna(last["rsi14"]) else 50.0
         prev_rsi = float(prev["rsi14"]) if not pd.isna(prev["rsi14"]) else 50.0
@@ -150,11 +182,19 @@ class StockScreener:
 
         momentum_score = min(25, raw_momentum_score)
 
-        # 4. 종합 진입 조건: 총점 >= 45 AND 수급 필수 게이트 통과
+        # -------------------------------------------------------------
+        # 4. 종합 진입 조건 판별
+        # -------------------------------------------------------------
         total_score = trend_score + supply_score + momentum_score
 
         if total_score >= 45 and supply_gate_passed:
-            budget_val = budget if budget is not None else float(config.CURRENT_SETTINGS.get("max_buy_budget_per_stock", 500000))
+            # config 미정의 환경 방어 처리
+            default_budget = 500000.0
+            try:
+                budget_val = budget if budget is not None else float(config.CURRENT_SETTINGS.get("max_buy_budget_per_stock", default_budget))
+            except NameError:
+                budget_val = budget if budget is not None else default_budget
+
             qty = max(1, int(budget_val // current_price)) if current_price > 0 else 1
             total_est = qty * current_price
 
@@ -175,9 +215,9 @@ class StockScreener:
                 "recommended_qty": qty,
                 "estimated_amount": total_est,
                 "rsi": round(float(rsi), 1) if not pd.isna(rsi) else None,
-                "ma5": round(float(last["ma5"]), 0),
-                "ma20": round(float(last["ma20"]), 0),
-                "ma60": round(float(last["ma60"]), 0)
+                "ma5": round(ma5_val, 0),
+                "ma20": round(ma20_val, 0),
+                "ma60": round(float(last["ma60"]), 0) if not pd.isna(last["ma60"]) else 0.0
             }
 
             if is_additional_buy:
