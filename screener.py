@@ -18,11 +18,56 @@ from time_utils import today, now_str, now
 
 PROPOSALS_FILE = os.path.join(os.path.dirname(__file__), "proposals.json")
 COOLDOWN_FILE = os.path.join(os.path.dirname(__file__), "cooldown.json")
+POSITIONS_STATE_FILE = os.path.join(os.path.dirname(__file__), "positions_state.json")
 
 class StockScreener:
     def __init__(self, api_client: Optional[KISApiClient] = None):
         self.logger = logging.getLogger("Screener")
         self.api = api_client or KISApiClient()
+
+    # =========================================================================
+    # 라이브 포지션 상태(최고가 및 1차 익절 상태) 관리
+    # =========================================================================
+    def _load_positions_state(self) -> Dict[str, Dict[str, Any]]:
+        """라이브 보유 종목별 최고가 및 1차 익절 상태 로드"""
+        if os.path.exists(POSITIONS_STATE_FILE):
+            try:
+                with open(POSITIONS_STATE_FILE, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as e:
+                self.logger.warning(f"포지션 상태 파일 로드 실패: {e}")
+        return {}
+
+    def _save_positions_state(self, state: Dict[str, Dict[str, Any]]) -> bool:
+        """라이브 보유 종목별 최고가 및 1차 익절 상태 저장"""
+        try:
+            with open(POSITIONS_STATE_FILE, "w", encoding="utf-8") as f:
+                json.dump(state, f, ensure_ascii=False, indent=2)
+            return True
+        except Exception as e:
+            self.logger.error(f"포지션 상태 파일 저장 실패: {e}")
+            return False
+
+    def _update_position_state(self, code: str, current_price: float, avg_buy_price: float, is_partial_take: bool = False) -> Dict[str, Any]:
+        """라이브 종목별 최고가 갱신 및 상태 반환"""
+        state = self._load_positions_state()
+        pos = state.get(code, {})
+        highest_price = max(pos.get("highest_price", avg_buy_price or current_price), current_price)
+        is_partial_sold = pos.get("is_partial_sold", False) or is_partial_take
+
+        pos["highest_price"] = highest_price
+        pos["is_partial_sold"] = is_partial_sold
+        pos["last_updated"] = now_str()
+        state[code] = pos
+        self._save_positions_state(state)
+        return pos
+
+    def _clear_position_state(self, code: str) -> None:
+        """전량 매도된 종목의 포지션 상태 정리"""
+        state = self._load_positions_state()
+        if code in state:
+            del state[code]
+            self._save_positions_state(state)
 
     # =========================================================================
     # 손절 종목 쿨다운(Cool-down) 관리
@@ -439,10 +484,26 @@ class StockScreener:
             except NameError:
                 budget_val = budget if budget is not None else default_budget
 
-            qty = max(1, int(budget_val // current_price)) if current_price > 0 else 1
-            total_est = qty * current_price
-
             atr_val = float(last["atr"]) if "atr" in last and not pd.isna(last["atr"]) else 0.0
+
+            # 변동성 조절 포지션 사이징 (ATR 기반 리스크 균등 분할)
+            if config.CURRENT_SETTINGS.get("volatility_sizing_enabled", True) and atr_val > 0 and current_price > 0:
+                risk_per_trade = float(config.CURRENT_SETTINGS.get("risk_per_trade", 0.01))
+                atr_stop_multiple = float(config.CURRENT_SETTINGS.get("atr_stop_multiple", 2.0))
+                max_holdings = int(config.CURRENT_SETTINGS.get("max_holding_stocks", 5))
+                total_equity = budget_val * max_holdings
+                risk_amt = total_equity * risk_per_trade
+                stop_dist = atr_stop_multiple * atr_val
+                if stop_dist > 0:
+                    vol_qty = int(risk_amt // stop_dist)
+                    max_cap_qty = int(budget_val // current_price)
+                    qty = max(1, min(max_cap_qty, vol_qty))
+                else:
+                    qty = max(1, int(budget_val // current_price))
+            else:
+                qty = max(1, int(budget_val // current_price)) if current_price > 0 else 1
+
+            total_est = qty * current_price
 
             result = {
                 "code": code,
@@ -537,7 +598,10 @@ class StockScreener:
         stop_loss_rate: Optional[float] = None,
         target_profit_rate: Optional[float] = None,
         current_date: Optional[str] = None,
-        use_file_cooldown: bool = False
+        use_file_cooldown: bool = False,
+        is_partial_sold: bool = False,
+        highest_price: Optional[float] = None,
+        holding_days: int = 0
     ) -> Optional[Dict[str, Any]]:
         """
         보유 종목의 수익률 및 지표 기반 매도 판단
@@ -546,6 +610,9 @@ class StockScreener:
         Args:
             current_date: 현재 거래일 (YYYYMMDD, 백테스터용)
             use_file_cooldown: True면 파일 기반 쿨다운 사용 (백테스팅), False면 API 거래이력 기반 (라이브)
+            is_partial_sold: 1차 50% 분할 익절 완료 여부
+            highest_price: 매수 후 달성한 최고가 (트레일링 스탑용)
+            holding_days: 보유 일수 (타임컷용)
         """
         code = holding.get("code")
         name = holding.get("name")
@@ -590,9 +657,6 @@ class StockScreener:
         # 최종 손절 기준: 고정 손절률과 ATR 동적 손절 중 더 보수적인(높은) 값 사용
         effective_sl_rate = sl_rate
         if atr_stop_rate is not None:
-            # ATR 손절이 고정 손절보다 덜 보수적(손실률이 더 작음)이면 ATR 사용
-            # 예: 고정 -3%, ATR -1.5% → ATR 사용 (노이즈에 덜 털림)
-            # 예: 고정 -3%, ATR -5% → 고정 사용 (과도한 손실 방지)
             if atr_stop_rate > sl_rate:
                 effective_sl_rate = atr_stop_rate
 
@@ -624,8 +688,33 @@ class StockScreener:
                 "atr_stop_rate": atr_stop_rate
             }
 
-        # 2. 목표 익절 (2일 유예 무시, 50% 분할 익절)
-        if profit_rate >= tp_rate:
+        # 2. 1차 익절 완료 종목의 최고가 추적 트레일링 스탑 (Trailing Stop)
+        if is_partial_sold:
+            high_benchmark = highest_price if highest_price is not None and highest_price > 0 else max(avg_buy_price, current_price)
+            trailing_pct = float(config.CURRENT_SETTINGS.get("trailing_stop_pct", 0.035))
+            trailing_stop_price = high_benchmark * (1 - trailing_pct)
+
+            # 최고가 대비 trailing_pct 이상 하락 시 잔여분 전량 익절
+            if current_price <= trailing_stop_price:
+                return {
+                    "code": code,
+                    "name": name,
+                    "holding_qty": holding_qty,
+                    "sell_qty": holding_qty,
+                    "sell_ratio": 1.0,
+                    "sell_type": "트레일링 스탑 전량익절",
+                    "avg_buy_price": avg_buy_price,
+                    "current_price": current_price,
+                    "profit_rate": profit_rate,
+                    "profit_loss": profit_loss,
+                    "reasons": [f"🏆 최고가({high_benchmark:,.0f}원) 대비 -{trailing_pct*100:.1f}% 하락 도달 - 잔여 수량 전량 익절 (+{profit_rate:.2f}%)"],
+                    "is_urgent": False
+                }
+            # 아직 트레일링 스탑 미도달 시 추가 상승을 위해 홀딩 유지
+            return None
+
+        # 3. 1차 목표 익절 (2일 유예 무시, 50% 분할 익절)
+        if profit_rate >= tp_rate and not is_partial_sold:
             sell_qty = max(1, holding_qty // 2) if holding_qty > 1 else holding_qty
             sell_ratio = 0.5 if holding_qty > 1 else 1.0
             return {
@@ -634,20 +723,41 @@ class StockScreener:
                 "holding_qty": holding_qty,
                 "sell_qty": sell_qty,
                 "sell_ratio": sell_ratio,
-                "sell_type": "50% 분할익절" if sell_ratio == 0.5 else "전량익절",
+                "sell_type": "50% 1차익절" if sell_ratio == 0.5 else "전량익절",
                 "avg_buy_price": avg_buy_price,
                 "current_price": current_price,
                 "profit_rate": profit_rate,
                 "profit_loss": profit_loss,
-                "reasons": [f"🎯 목표 익절 수익률 달성 (+{profit_rate:.2f}% >= +{tp_rate:.1f}%) - 50% 분할 익절 및 잔여분 트레일링 스탑"],
-                "is_urgent": False
+                "reasons": [f"🎯 목표 익절 수익률 달성 (+{profit_rate:.2f}% >= +{tp_rate:.1f}%) - 50% 1차 익절 및 잔여분 트레일링 스탑"],
+                "is_urgent": False,
+                "is_partial_take": True
             }
 
-        # 3. 2일 보유 유예 원칙
+        # 4. 2일 보유 유예 원칙
         if is_recently_bought:
             return None
 
-        # 4. 일반 기술적 매도 신호 분석
+        # 5. 타임컷 (Time-based Exit / 기간 만료 청산)
+        time_stop_days = int(config.CURRENT_SETTINGS.get("time_stop_days", 6))
+        time_stop_min_profit = float(config.CURRENT_SETTINGS.get("time_stop_min_profit", 0.02)) * 100
+        if config.CURRENT_SETTINGS.get("time_stop_enabled", True) and holding_days >= time_stop_days:
+            if profit_rate < time_stop_min_profit:
+                return {
+                    "code": code,
+                    "name": name,
+                    "holding_qty": holding_qty,
+                    "sell_qty": holding_qty,
+                    "sell_ratio": 1.0,
+                    "sell_type": "타임컷 청산 (기간 만료)",
+                    "avg_buy_price": avg_buy_price,
+                    "current_price": current_price,
+                    "profit_rate": profit_rate,
+                    "profit_loss": profit_loss,
+                    "reasons": [f"⏳ {holding_days}영업일 경과 및 목표수익 미달({profit_rate:+.2f}% < {time_stop_min_profit:.1f}%) - 자금 회수 타임컷 청산"],
+                    "is_urgent": False
+                }
+
+        # 6. 일반 기술적 매도 신호 분석
         if df is not None and len(df) >= 20:
             last = df.iloc[-1]
             prev = df.iloc[-2]
@@ -680,7 +790,7 @@ class StockScreener:
                     "reasons": sell_reasons,
                     "is_urgent": False
                 }
-            elif is_rsi_overheat:
+            elif is_rsi_overheat and not is_partial_sold:
                 sell_qty = max(1, holding_qty // 2) if holding_qty > 1 else holding_qty
                 sell_ratio = 0.5 if holding_qty > 1 else 1.0
                 return {
@@ -695,7 +805,8 @@ class StockScreener:
                     "profit_rate": profit_rate,
                     "profit_loss": profit_loss,
                     "reasons": sell_reasons,
-                    "is_urgent": False
+                    "is_urgent": False,
+                    "is_partial_take": True
                 }
 
         return None
@@ -719,22 +830,37 @@ class StockScreener:
         profit_rate = float(holding.get("profit_rate", 0.0))
         target_profit_rate = float(config.CURRENT_SETTINGS.get("target_profit_rate", 0.05)) * 100
         stop_loss_rate = float(config.CURRENT_SETTINGS.get("stop_loss_rate", -0.03)) * 100
+        current_price = float(holding.get("current_price", 0.0))
+        avg_buy_price = float(holding.get("avg_buy_price", 0.0))
 
-        # 긴급 손절/목표 익절은 차트 로드 없이 즉시 반환
-        if profit_rate <= stop_loss_rate or profit_rate >= target_profit_rate:
-            return self.evaluate_sell_signals_from_df(
+        # 라이브 포지션 최고가 및 1차 익절 상태 갱신
+        pos_state = self._update_position_state(code, current_price, avg_buy_price)
+        is_partial_sold = pos_state.get("is_partial_sold", False)
+        highest_price = pos_state.get("highest_price", current_price)
+
+        # 긴급 손절/목표 익절은 차트 로드 없이 즉시 반환 (단, 1차 익절 완료 종목은 트레일링 스탑 평가로 진입)
+        if profit_rate <= stop_loss_rate or (profit_rate >= target_profit_rate and not is_partial_sold):
+            sell_res = self.evaluate_sell_signals_from_df(
                 holding=holding,
                 df=None,
                 is_recently_bought=False,
                 stop_loss_rate=stop_loss_rate / 100,
                 target_profit_rate=target_profit_rate / 100,
                 current_date=today().strftime("%Y%m%d"),
-                use_file_cooldown=False  # 라이브: API 거래이력 기반 쿨다운
+                use_file_cooldown=False,  # 라이브: API 거래이력 기반 쿨다운
+                is_partial_sold=is_partial_sold,
+                highest_price=highest_price
             )
+            if sell_res:
+                if sell_res.get("is_partial_take"):
+                    self._update_position_state(code, current_price, avg_buy_price, is_partial_take=True)
+                elif sell_res.get("sell_ratio") == 1.0:
+                    self._clear_position_state(code)
+            return sell_res
 
         # 2일 이내 매수 종목이면 기술적 분석 스킵
         is_recent = self._is_recently_bought(code, days=2)
-        if is_recent:
+        if is_recent and not is_partial_sold:
             self.logger.info(f"[{holding.get('name')}({code})] 매수 후 2영업일 이내 종목으로 기술적 매도 제외")
             return None
 
@@ -764,15 +890,23 @@ class StockScreener:
                 })
 
         df = self.calculate_technical_indicators(candles, is_intraday=True)
-        return self.evaluate_sell_signals_from_df(
+        sell_res = self.evaluate_sell_signals_from_df(
             holding=holding,
             df=df,
             is_recently_bought=is_recent,
             stop_loss_rate=stop_loss_rate / 100,
             target_profit_rate=target_profit_rate / 100,
             current_date=today().strftime("%Y%m%d"),
-            use_file_cooldown=False  # 라이브: API 거래이력 기반 쿨다운
+            use_file_cooldown=False,  # 라이브: API 거래이력 기반 쿨다운
+            is_partial_sold=is_partial_sold,
+            highest_price=highest_price
         )
+        if sell_res:
+            if sell_res.get("is_partial_take"):
+                self._update_position_state(code, current_price, avg_buy_price, is_partial_take=True)
+            elif sell_res.get("sell_ratio") == 1.0:
+                self._clear_position_state(code)
+        return sell_res
 
     def run_closing_price_screening(self) -> Dict[str, Any]:
         """15:15 종가 매수 스크리닝 및 제안서 갱신"""
@@ -800,7 +934,7 @@ class StockScreener:
                 self.logger.warning(f"[{name}({code})] 종가 스크리닝 중 예외: {e}")
 
         buy_proposals.sort(key=lambda x: x["score"], reverse=True)
-        top_buy_proposals = buy_proposals[:5]
+        top_buy_proposals = buy_proposals
 
         sell_proposals = []
         for holding in holdings:
@@ -903,11 +1037,16 @@ class StockScreener:
 
         executed = []
         max_holdings = int(config.CURRENT_SETTINGS.get("max_holding_stocks", 5))
+        max_daily_buy = int(config.CURRENT_SETTINGS.get("max_daily_buy_count", 2))
         balance = self.api.get_account_balance()
         current_holding_count = len(balance.get("holdings", []))
+        daily_new_buy_count = 0
 
         for item in buy_list:
             if current_holding_count >= max_holdings and not item.get("is_additional_buy"):
+                continue
+            if not item.get("is_additional_buy") and daily_new_buy_count >= max_daily_buy:
+                self.logger.info(f"[{item.get('name')}] 1일 최대 신규 매수 제한({max_daily_buy}종목) 도달로 매수 보류")
                 continue
 
             code = item.get("code")
@@ -928,6 +1067,7 @@ class StockScreener:
                 executed.append({"stock": item, "response": res})
                 if not item.get("is_additional_buy"):
                     current_holding_count += 1
+                    daily_new_buy_count += 1
             except Exception as e:
                 self.logger.error(f"[{name}({code})] 주문 집행 에러: {e}")
 

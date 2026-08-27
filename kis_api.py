@@ -8,6 +8,7 @@ import json
 import logging
 import requests
 import datetime
+import threading
 from typing import Dict, Any, List, Optional
 import pandas as pd
 
@@ -26,6 +27,7 @@ class KISApiClient:
         self.access_token: Optional[str] = None
         self.token_expired_at: Optional[datetime.datetime] = None
         self._last_call_time = 0.0
+        self._token_lock = threading.Lock()
 
         # 토큰 파일 로드
         self._load_token_file()
@@ -49,30 +51,74 @@ class KISApiClient:
             time.sleep(delay - elapsed)
         self._last_call_time = time.time()
 
-    def _load_token_file(self):
-        if os.path.exists(self.token_file):
+    def _request_with_retry(
+        self,
+        method: str,
+        url: str,
+        headers: Optional[Dict[str, str]] = None,
+        params: Optional[Dict[str, Any]] = None,
+        json_data: Optional[Dict[str, Any]] = None,
+        max_retries: int = 3,
+        timeout: float = 8.0
+    ) -> requests.Response:
+        """429 Too Many Requests 및 일시적 네트워크 장애에 대한 지수 백오프 재시도 요청"""
+        last_resp = None
+        for attempt in range(1, max_retries + 1):
+            self._rate_limit()
             try:
-                with open(self.token_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    self.access_token = data.get("access_token")
-                    exp_str = data.get("token_expired_at")
-                    if exp_str:
-                        self.token_expired_at = datetime.datetime.fromisoformat(exp_str)
-                        # 저장된 토큰이 timezone-naive인 경우 KST timezone 부여
-                        if self.token_expired_at.tzinfo is None:
-                            self.token_expired_at = self.token_expired_at.replace(tzinfo=datetime.timezone(datetime.timedelta(hours=9)))
+                if method.upper() == "GET":
+                    resp = requests.get(url, headers=headers, params=params, timeout=timeout)
+                else:
+                    resp = requests.post(url, headers=headers, json=json_data, timeout=timeout)
+
+                # 정상 응답이면 즉시 반환
+                if resp.status_code == 200:
+                    return resp
+
+                last_resp = resp
+                # 429 Too Many Requests 또는 5xx 서버 일시 오류 시 재시도
+                if resp.status_code in (429, 500, 502, 503, 504):
+                    wait_sec = attempt * 0.5
+                    self.logger.warning(f"[{method}] {url} HTTP {resp.status_code} 감지 - {wait_sec:.1f}초 후 재시도 ({attempt}/{max_retries})")
+                    time.sleep(wait_sec)
+                else:
+                    # 기타 4xx 클라이언트 에러는 재시도 없이 반환
+                    return resp
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+                wait_sec = attempt * 0.5
+                self.logger.warning(f"[{method}] {url} 통신 예외 ({e}) - {wait_sec:.1f}초 후 재시도 ({attempt}/{max_retries})")
+                time.sleep(wait_sec)
             except Exception as e:
-                self.logger.warning(f"토큰 파일 로드 실패: {e}")
+                self.logger.error(f"[{method}] {url} 요청 중 예외: {e}")
+                raise e
+
+        return last_resp if last_resp is not None else requests.Response()
+
+    def _load_token_file(self):
+        with self._token_lock:
+            if os.path.exists(self.token_file):
+                try:
+                    with open(self.token_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        self.access_token = data.get("access_token")
+                        exp_str = data.get("token_expired_at")
+                        if exp_str:
+                            self.token_expired_at = datetime.datetime.fromisoformat(exp_str)
+                            if self.token_expired_at.tzinfo is None:
+                                self.token_expired_at = self.token_expired_at.replace(tzinfo=datetime.timezone(datetime.timedelta(hours=9)))
+                except Exception as e:
+                    self.logger.warning(f"토큰 파일 로드 실패: {e}")
 
     def _save_token_file(self):
-        try:
-            with open(self.token_file, "w", encoding="utf-8") as f:
-                json.dump({
-                    "access_token": self.access_token,
-                    "token_expired_at": self.token_expired_at.isoformat() if self.token_expired_at else ""
-                }, f)
-        except Exception as e:
-            self.logger.warning(f"토큰 파일 저장 실패: {e}")
+        with self._token_lock:
+            try:
+                with open(self.token_file, "w", encoding="utf-8") as f:
+                    json.dump({
+                        "access_token": self.access_token,
+                        "token_expired_at": self.token_expired_at.isoformat() if self.token_expired_at else ""
+                    }, f)
+            except Exception as e:
+                self.logger.warning(f"토큰 파일 저장 실패: {e}")
 
     def is_token_valid(self) -> bool:
         if not self.access_token or not self.token_expired_at:
@@ -85,31 +131,35 @@ class KISApiClient:
         if self.is_token_valid():
             return True
 
-        url = f"{self.url_base}/oauth2/tokenP"
-        body = {
-            "grant_type": "client_credentials",
-            "appkey": self.app_key,
-            "appsecret": self.app_secret
-        }
-        headers = {"content-type": "application/json; charset=utf-8"}
-
-        try:
-            self._rate_limit()
-            res = requests.post(url, headers=headers, json=body, timeout=10)
-            if res.status_code == 200:
-                data = res.json()
-                self.access_token = data.get("access_token")
-                expires_in = int(data.get("expires_in", 86400))
-                self.token_expired_at = now() + datetime.timedelta(seconds=expires_in)
-                self._save_token_file()
-                self.logger.info(f"[{'모의' if self.is_mock else '실전'}] 토큰 발급 성공 (만료: {self.token_expired_at})")
+        with self._token_lock:
+            if self.is_token_valid():
                 return True
-            else:
-                self.logger.error(f"토큰 발급 실패 ({res.status_code}): {res.text}")
+
+            url = f"{self.url_base}/oauth2/tokenP"
+            body = {
+                "grant_type": "client_credentials",
+                "appkey": self.app_key,
+                "appsecret": self.app_secret
+            }
+            headers = {"content-type": "application/json; charset=utf-8"}
+
+            try:
+                self._rate_limit()
+                res = requests.post(url, headers=headers, json=body, timeout=10)
+                if res.status_code == 200:
+                    data = res.json()
+                    self.access_token = data.get("access_token")
+                    expires_in = int(data.get("expires_in", 86400))
+                    self.token_expired_at = now() + datetime.timedelta(seconds=expires_in)
+                    self._save_token_file()
+                    self.logger.info(f"[{'모의' if self.is_mock else '실전'}] 토큰 발급 성공 (만료: {self.token_expired_at})")
+                    return True
+                else:
+                    self.logger.error(f"토큰 발급 실패 ({res.status_code}): {res.text}")
+                    return False
+            except Exception as e:
+                self.logger.error(f"토큰 발급 요청 예외: {e}")
                 return False
-        except Exception as e:
-            self.logger.error(f"토큰 발급 요청 예외: {e}")
-            return False
 
     def _ensure_token(self):
         if not self.is_token_valid():
@@ -155,8 +205,7 @@ class KISApiClient:
             "FID_INPUT_ISCD": stock_code
         }
         try:
-            self._rate_limit()
-            res = requests.get(url, headers=headers, params=params, timeout=5)
+            res = self._request_with_retry("GET", url, headers=headers, params=params, timeout=6)
             data = res.json()
             output = data.get("output", {})
             if output:
@@ -195,8 +244,7 @@ class KISApiClient:
             "FID_ORG_ADJ_PRC": "0"
         }
         try:
-            self._rate_limit()
-            res = requests.get(url, headers=headers, params=params, timeout=6)
+            res = self._request_with_retry("GET", url, headers=headers, params=params, timeout=7)
             data = res.json()
             output2 = data.get("output2", [])
             results = []
@@ -238,8 +286,7 @@ class KISApiClient:
             "CTX_AREA_NK100": ""
         }
         try:
-            self._rate_limit()
-            res = requests.get(url, headers=headers, params=params, timeout=6)
+            res = self._request_with_retry("GET", url, headers=headers, params=params, timeout=7)
             data = res.json()
             output1 = data.get("output1", [])
             output2 = data.get("output2", [{}])
@@ -263,8 +310,6 @@ class KISApiClient:
             summary = {}
             if output2:
                 o2 = output2[0]
-                # 보유 주식 평가금 = 개별 보유 종목 평가금액(evlu_amt) 합계
-                # (evlu_amt_smtl은 예수금을 포함한 총평가금액이므로 주식 평가금으로 부적합)
                 stock_eval_amt = sum(h["eval_amount"] for h in holdings)
                 summary = {
                     "tot_asset": float(o2.get("tot_evlu_amt", 0)),
@@ -274,7 +319,6 @@ class KISApiClient:
                     "net_asset": float(o2.get("nass_amt", 0))
                 }
             elif holdings:
-                # output2가 없지만 보유 종목이 있는 경우: 보유 종목 평가금 합계로 계산
                 stock_eval_amt = sum(h["eval_amount"] for h in holdings)
                 total_profit_loss = sum(h["profit_loss"] for h in holdings)
                 summary = {
@@ -324,13 +368,12 @@ class KISApiClient:
             "PDNO": stock_code,
             "ORD_DVSN": ord_dv,
             "ORD_QTY": str(qty),
-            "ORD_UNPR": str(price) if ord_dv == "00" else "0"
+            "ORD_UNPR": str(price) if ord_dv != "01" and price > 0 else "0"
         }
 
         try:
-            self._rate_limit()
             headers = self._get_headers(tr_id, hashkey=self.get_hashkey(body))
-            res = requests.post(url, headers=headers, json=body, timeout=8)
+            res = self._request_with_retry("POST", url, headers=headers, json_data=body, timeout=8)
             data = res.json()
             self.logger.info(f"주문 결과 [{buy_sell}] {stock_code} {qty}주 -> rt_cd={data.get('rt_cd')}, msg={data.get('msg1')}")
             return {
@@ -372,8 +415,7 @@ class KISApiClient:
             "CTX_AREA_NK100": ""
         }
         try:
-            self._rate_limit()
-            res = requests.get(url, headers=headers, params=params, timeout=6)
+            res = self._request_with_retry("GET", url, headers=headers, params=params, timeout=7)
             data = res.json()
             output1 = data.get("output1", [])
             orders = []

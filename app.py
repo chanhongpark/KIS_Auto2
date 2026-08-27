@@ -245,7 +245,7 @@ with st.sidebar:
     st.markdown("<div class='nav-header'>🚀 CORE TRADING • 실시간 관제</div>", unsafe_allow_html=True)
     live_menu = [
         ("overview", "📊 Overview • 종합 자산 관제"),
-        ("screener", "🎯 Alpha Hunter • 15:15 종가 매수"),
+        ("screener", "🎯 15:15 종가 매수 • 스크리닝 & 발주"),
         ("portfolio", "💼 Risk Matrix • 보유 자산 & 리스크"),
         ("execution", "⚡ Order Book • 실시간 주문/체결")
     ]
@@ -515,19 +515,29 @@ if st.session_state["nav_page"] == "overview":
             )
 
 # ==============================================================================
-# 2. 15:15 종가 매수 추천 페이지
+# 2. 15:15 종가 매수 스크리닝 & 발주 페이지
 # ==============================================================================
 elif st.session_state["nav_page"] == "screener":
-    st.title("🎯 Alpha Screener • 15:15 종가 매수 발굴")
-    st.caption(f"스크리닝 기준 시각: **{proposals.get('generated_at', '-')}** | 거래량 1.04배 보정치 & 캡 점수 적용")
+    col_t1, col_t2 = st.columns([3.2, 1.3])
+    with col_t1:
+        st.title("🎯 15:15 종가 매수 • 스크리닝 & 발주")
+        st.caption(f"스크리닝 기준 시각: **{proposals.get('generated_at', '-')}** | 거래량 1.04배 보정치 & 캡 점수 적용 (45점 이상)")
+    with col_t2:
+        st.write("")
+        if st.button("🔄 즉시 종가 스크리닝 실행", key="btn_run_screener_page", type="primary", use_container_width=True):
+            with st.spinner("유니버스 종목 분석 및 종가 매수 스크리닝 중..."):
+                screener.run_closing_price_screening()
+                st.success("✅ 종가 스크리닝 완료!")
+                time.sleep(1)
+                st.rerun()
 
     buy_list = proposals.get("buy_proposals", [])
     if not buy_list:
-        st.info("현재 추천된 매수 종목이 없습니다. (총점 45점 이상 & 수급 필수 게이트 충족 종목)")
+        st.info("현재 추천된 매수 종목이 없습니다. 상단의 **[🔄 즉시 종가 스크리닝 실행]** 버튼을 누르거나 15:15 자동 스케줄을 기다려주세요. (총점 45점 이상 & 수급 필수 게이트 충족 종목 표시)")
     else:
         for idx, item in enumerate(buy_list):
             with st.container():
-                c1, c2, c3, c4 = st.columns([2.8, 2.2, 2.5, 2.0])
+                c1, c2, c3, c4 = st.columns([2.8, 2.3, 2.3, 2.0])
                 with c1:
                     buy_tag = "🔄 추가매수" if item.get("code") in holding_codes else "🆕 신규매수"
                     st.markdown(f"### {buy_tag} {item['name']} <small style='color:#64748b'>({item['code']})</small>", unsafe_allow_html=True)
@@ -549,8 +559,8 @@ elif st.session_state["nav_page"] == "screener":
                 with c2:
                     ord_type = st.radio(
                         "주문 유형",
-                        ["시장가", "지정가"],
-                        horizontal=True,
+                        ["시장가", "지정가", "LOC (종가조건부)"],
+                        horizontal=False,
                         key=f"buy_type_{item['code']}_{idx}",
                         label_visibility="collapsed"
                     )
@@ -564,6 +574,17 @@ elif st.session_state["nav_page"] == "screener":
                             step=100,
                             key=f"buy_price_{item['code']}_{idx}"
                         )
+                        st.caption("🎯 지정한 가격에 즉시 호가 제출")
+                    elif ord_type == "LOC (종가조건부)":
+                        target_price = st.number_input(
+                            "LOC 상한가(원)",
+                            min_value=100,
+                            max_value=10000000,
+                            value=int(item['current_price']),
+                            step=100,
+                            key=f"buy_price_{item['code']}_{idx}"
+                        )
+                        st.caption("🛡️ 종가가 상한가 이하일 때만 종가로 자동 체결")
                     else:
                         target_price = int(item['current_price'])
                         st.caption("⚡ 종가 시장가 즉시 체결")
@@ -585,9 +606,15 @@ elif st.session_state["nav_page"] == "screener":
                     st.write("")
                     btn_label = f"⚡ 매수 ({ord_type})"
                     if st.button(btn_label, key=f"btn_buy_{item['code']}_{idx}", type="primary", use_container_width=True):
-                        is_limit = (ord_type == "지정가")
-                        ord_dv = "00" if is_limit else "01"
-                        order_prc = int(target_price) if is_limit else 0
+                        if ord_type == "지정가":
+                            ord_dv = "00"
+                            order_prc = int(target_price)
+                        elif ord_type == "LOC (종가조건부)":
+                            ord_dv = "51"  # 장마감 단일가 LOC (조건부지정가: 02, LOC: 51)
+                            order_prc = int(target_price)
+                        else:
+                            ord_dv = "01"
+                            order_prc = 0
                         
                         with st.spinner(f"{item['name']} {order_qty}주 {ord_type} 주문 전송 중..."):
                             res = api.order_cash(
@@ -1380,13 +1407,37 @@ elif st.session_state["nav_page"] == "settings":
         st.caption("진입가 - (2 × ATR)을 손절선으로 사용하여 고정 -3% 대신 정상적인 시장 노이즈에 털리는 현상을 방지합니다.")
 
         st.divider()
-        st.write(f"**관심/스크리닝 유니버스 종목 관리 (현재 {len(config.CURRENT_SETTINGS.get('watchlist', []))}개 종목)**")
+        st.write("**🛡️ 1일 최대 신규 매수 & 트레일링 스탑 & 타임컷**")
+        c_tr1, c_tr2 = st.columns(2)
+        with c_tr1:
+            f_max_daily_buy = st.number_input(
+                "1일 최대 신규 매수 종목 수",
+                min_value=1,
+                max_value=10,
+                value=int(config.CURRENT_SETTINGS.get("max_daily_buy_count", 2)),
+                step=1
+            )
+            f_trailing_stop_pct = st.number_input(
+                "1차 익절 후 고점 대비 트레일링 스탑 비율 (예: 0.035 = 3.5%)",
+                min_value=0.01,
+                max_value=0.20,
+                value=float(config.CURRENT_SETTINGS.get("trailing_stop_pct", 0.035)),
+                step=0.005
+            )
+        with c_tr2:
+            f_time_stop_enabled = st.toggle("타임컷(보유기간 만료) 청산 활성화", value=config.CURRENT_SETTINGS.get("time_stop_enabled", True))
+            f_time_stop_days = st.number_input("타임컷 보유 일수 (거래일)", min_value=2, max_value=30, value=int(config.CURRENT_SETTINGS.get("time_stop_days", 6)), step=1)
+            f_time_stop_min_profit = st.number_input("타임컷 기준 최소 수익률", min_value=-0.10, max_value=0.10, value=float(config.CURRENT_SETTINGS.get("time_stop_min_profit", 0.02)), step=0.01)
+
+        st.divider()
+        st.write(f"**📋 관심/스크리닝 유니버스 종목 관리 (현재 {len(config.CURRENT_SETTINGS.get('watchlist', []))}개 종목)**")
         wl = config.CURRENT_SETTINGS.get("watchlist", [])
         wl_text = "\n".join([f"{w.get('code')},{w.get('name')},{w.get('market', 'KOSPI')}" for w in wl])
         f_wl_raw = st.text_area(
-            "종목코드,종목명,시장 (줄단위 입력)",
+            "종목코드,종목명,시장 (줄단위 입력/수정)",
             value=wl_text,
-            height=300
+            height=250,
+            help="한 줄에 한 종목씩 '코드,종목명,시장(KOSPI/KOSDAQ/ETF)' 형식으로 입력하세요."
         )
 
         submitted = st.form_submit_button("💾 설정 저장 및 즉시 적용", type="primary")
@@ -1401,7 +1452,8 @@ elif st.session_state["nav_page"] == "settings":
                         "market": parts[2] if len(parts) > 2 else "KOSPI"
                     })
 
-            new_settings = {
+            new_settings = config.CURRENT_SETTINGS.copy()
+            new_settings.update({
                 "mock_trading": f_mock,
                 "telegram_enabled": f_telegram,
                 "target_profit_rate": f_profit,
@@ -1419,10 +1471,64 @@ elif st.session_state["nav_page"] == "settings":
                 "atr_stop_loss_multiple": f_atr_multiple,
                 "atr_stop_loss_min_pct": f_atr_min,
                 "atr_stop_loss_max_pct": f_atr_max,
-                "atr_stop_loss_use_low_break": f_atr_lowbreak
-            }
+                "atr_stop_loss_use_low_break": f_atr_lowbreak,
+                "max_daily_buy_count": f_max_daily_buy,
+                "trailing_stop_pct": f_trailing_stop_pct,
+                "time_stop_enabled": f_time_stop_enabled,
+                "time_stop_days": f_time_stop_days,
+                "time_stop_min_profit": f_time_stop_min_profit
+            })
             config.save_settings(new_settings)
             config.CURRENT_SETTINGS = new_settings
-            st.success("✅ 설정이 저장되었습니다!")
+            st.success("✅ 설정이 성공적으로 저장 및 적용되었습니다!")
             time.sleep(1)
             st.rerun()
+
+    # 간편 종목 추가/삭제 툴바
+    st.divider()
+    st.subheader("⚡ 간편 종목 추가 및 삭제")
+    col_add, col_del = st.columns(2)
+    with col_add:
+        with st.form("quick_add_stock_form"):
+            st.write("##### ➕ 관심종목 빠른 추가")
+            add_code = st.text_input("종목코드 (6자리)", placeholder="예: 005930")
+            add_name = st.text_input("종목명", placeholder="예: 삼성전자")
+            add_market = st.selectbox("시장 구분", ["KOSPI", "KOSDAQ", "ETF"])
+            add_btn = st.form_submit_button("추가하기")
+            if add_btn:
+                if add_code and add_name:
+                    cur_wl = config.CURRENT_SETTINGS.get("watchlist", [])
+                    if any(w.get("code") == add_code.strip() for w in cur_wl):
+                        st.warning(f"이미 등록된 종목코드입니다: {add_code}")
+                    else:
+                        cur_wl.append({
+                            "code": add_code.strip(),
+                            "name": add_name.strip(),
+                            "market": add_market
+                        })
+                        config.CURRENT_SETTINGS["watchlist"] = cur_wl
+                        config.save_settings(config.CURRENT_SETTINGS)
+                        st.success(f"✅ {add_name}({add_code}) 종목이 추가되었습니다!")
+                        time.sleep(1)
+                        st.rerun()
+                else:
+                    st.error("종목코드와 종목명을 모두 입력해주세요.")
+
+    with col_del:
+        with st.form("quick_del_stock_form"):
+            st.write("##### 🗑️ 관심종목 선택 삭제")
+            cur_wl = config.CURRENT_SETTINGS.get("watchlist", [])
+            del_options = [f"{w.get('name')} ({w.get('code')}) [{w.get('market', 'KOSPI')}]" for w in cur_wl]
+            selected_del = st.multiselect("삭제할 종목 선택", del_options)
+            del_btn = st.form_submit_button("선택 종목 삭제", type="primary")
+            if del_btn:
+                if selected_del:
+                    del_codes = {opt.split("(")[1].split(")")[0].strip() for opt in selected_del if "(" in opt}
+                    new_wl = [w for w in cur_wl if w.get("code") not in del_codes]
+                    config.CURRENT_SETTINGS["watchlist"] = new_wl
+                    config.save_settings(config.CURRENT_SETTINGS)
+                    st.success(f"✅ {len(del_codes)}개 종목이 삭제되었습니다!")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.warning("삭제할 종목을 1개 이상 선택해주세요.")

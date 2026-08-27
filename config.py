@@ -75,15 +75,23 @@ DEFAULT_SETTINGS = {
     "score_cap_trend": 40,                  # 추세군(이동평균) 최대 점수 상한
     "score_cap_momentum": 30,               # 모멘텀군(RSI, 볼린저) 최대 점수 상한
     "score_cap_volume": 25,                 # 거래량군 최대 점수 상한
-    "buy_score_threshold": 40,              # 매수 추천 최소 종합 점수
+    "buy_score_threshold": 45,              # 매수 추천 최소 종합 점수 (45점 이상 추천)
 
     # --- 실시간 봉 반영 설정 ---
     "use_realtime_candle": False,           # 실시간 현재가를 일봉에 반영할지 여부 (False: 완성봉만 사용)
 
-    # --- 분할 매도 설정 ---
+    # --- 분할 매도 및 트레일링 스탑 설정 ---
     "partial_sell_ratio": 0.5,              # 1차 익절 시 매도 비율 (50%)
-    "trailing_stop_pct": 0.05,              # 트레일링 스탑 비율 (5%)
+    "trailing_stop_pct": 0.035,             # 1차 익절 후 최고가 대비 트레일링 스탑 비율 (3.5%)
     "rsi_overbought_sell": False,           # RSI 과열 시 전량 매도 여부 (False: 분할 매도만)
+
+    # --- 타임컷 (Time-based Exit / 기간 청산) ---
+    "time_stop_enabled": True,              # 타임컷 청산 활성화
+    "time_stop_days": 6,                    # 타임컷 보유 일수 (6영업일)
+    "time_stop_min_profit": 0.02,           # 타임컷 기준 최소 수익률 (+2%)
+
+    # --- 1일 최대 신규 매수 제한 ---
+    "max_daily_buy_count": 2,               # 1일 최대 신규 매수 종목 수 (집단 갭하락 리스크 방어)
 
     # --- 변동성 조절 포지션 사이징 ---
     "volatility_sizing_enabled": True,      # ATR 기반 변동성 조절 포지션 사이징 활성화

@@ -10,11 +10,17 @@ import pandas as pd
 import numpy as np
 from unittest.mock import MagicMock
 
-from screener import StockScreener
+import os
+from screener import StockScreener, POSITIONS_STATE_FILE
 import config
 
 class TestTradingAlgorithm(unittest.TestCase):
     def setUp(self):
+        if os.path.exists(POSITIONS_STATE_FILE):
+            try:
+                os.remove(POSITIONS_STATE_FILE)
+            except Exception:
+                pass
         self.mock_api = MagicMock()
         self.screener = StockScreener(self.mock_api)
 

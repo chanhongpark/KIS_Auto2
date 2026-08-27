@@ -15,6 +15,9 @@ token_kis_*.json
 # Logs & Runtime Cache
 *.log
 proposals.json
+cooldown.json
+positions_state.json
+cache/
 
 # IDE & OS
 .vscode/

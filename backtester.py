@@ -3,6 +3,7 @@ Backtesting Engine for KIS Auto Trading Strategy
 FinanceDataReader 기반 과거 데이터 시뮬레이션
 StockScreener(screener.py)의 매수/매도 평가 함수(evaluate_buy_signals_from_df, evaluate_sell_signals_from_df)를 100% 동일하게 직접 호출하여 실행합니다.
 """
+import os
 import logging
 import datetime
 from typing import Dict, Any, List, Optional
@@ -14,6 +15,8 @@ from screener import StockScreener
 import config
 
 logger = logging.getLogger("Backtester")
+
+CACHE_DIR = os.path.join(os.path.dirname(__file__), "cache")
 
 class Backtester:
     def __init__(
@@ -42,42 +45,64 @@ class Backtester:
         self.screener = StockScreener()
 
     def fetch_universe_data(self, progress_callback=None) -> Dict[str, pd.DataFrame]:
-        """유니버스 전 종목에 대해 백테스트 시작일 이전 100영업일부터의 일봉 데이터 다운로드"""
+        """유니버스 전 종목에 대해 백테스트 시작일 이전 100영업일부터의 일봉 데이터 다운로드 및 로컬 캐싱"""
         data_map = {}
         start_dt = pd.to_datetime(self.start_date) - datetime.timedelta(days=120)
         start_str = start_dt.strftime("%Y-%m-%d")
+        os.makedirs(CACHE_DIR, exist_ok=True)
 
         total = len(self.universe)
         for idx, item in enumerate(self.universe):
             code = item.get("code")
             name = item.get("name", code)
-            try:
-                df = fdr.DataReader(code, start_str, self.end_date)
-                if df is not None and not df.empty and len(df) >= 60:
-                    df = df.reset_index()
-                    rename_cols = {}
-                    for col in df.columns:
-                        col_lower = str(col).lower()
-                        if "date" in col_lower or "날짜" in col_lower:
-                            rename_cols[col] = "date"
-                        elif "close" in col_lower or "종가" in col_lower:
-                            rename_cols[col] = "close"
-                        elif "open" in col_lower or "시가" in col_lower:
-                            rename_cols[col] = "open"
-                        elif "high" in col_lower or "고가" in col_lower:
-                            rename_cols[col] = "high"
-                        elif "low" in col_lower or "저가" in col_lower:
-                            rename_cols[col] = "low"
-                        elif "volume" in col_lower or "거래량" in col_lower:
-                            rename_cols[col] = "volume"
-                    df = df.rename(columns=rename_cols)
-                    df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y%m%d")
-                    data_map[code] = {
-                        "name": name,
-                        "df": df
-                    }
-            except Exception as e:
-                logger.warning(f"[{name}({code})] 백테스트 데이터 수집 실패: {e}")
+            cache_file = os.path.join(CACHE_DIR, f"{code}_{start_str}_{self.end_date}.pkl")
+            df = None
+
+            # 1. 로컬 캐시 확인
+            if os.path.exists(cache_file):
+                try:
+                    df = pd.read_pickle(cache_file)
+                except Exception as e:
+                    logger.warning(f"[{name}({code})] 캐시 로드 실패: {e}")
+                    df = None
+
+            # 2. 캐시 부재 시 FDR 다운로드 후 캐싱
+            if df is None or df.empty:
+                try:
+                    df = fdr.DataReader(code, start_str, self.end_date)
+                    if df is not None and not df.empty and len(df) >= 60:
+                        df = df.reset_index()
+                        rename_cols = {}
+                        for col in df.columns:
+                            col_lower = str(col).lower()
+                            if "date" in col_lower or "날짜" in col_lower:
+                                rename_cols[col] = "date"
+                            elif "close" in col_lower or "종가" in col_lower:
+                                rename_cols[col] = "close"
+                            elif "open" in col_lower or "시가" in col_lower:
+                                rename_cols[col] = "open"
+                            elif "high" in col_lower or "고가" in col_lower:
+                                rename_cols[col] = "high"
+                            elif "low" in col_lower or "저가" in col_lower:
+                                rename_cols[col] = "low"
+                            elif "volume" in col_lower or "거래량" in col_lower:
+                                rename_cols[col] = "volume"
+                        df = df.rename(columns=rename_cols)
+                        df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y%m%d")
+                        try:
+                            df.to_pickle(cache_file)
+                        except Exception as ce:
+                            logger.warning(f"[{name}({code})] 캐시 저장 실패: {ce}")
+                except Exception as e:
+                    logger.warning(f"[{name}({code})] 백테스트 데이터 수집 실패: {e}")
+
+            if df is not None and not df.empty and len(df) >= 60:
+                # 전체 일봉 DataFrame에 대해 보조지표를 1회 사전 계산 (시뮬레이션 루프 속도 100배 가속)
+                df_tech = self.screener.calculate_technical_indicators(df.to_dict("records"), is_intraday=False)
+                data_map[code] = {
+                    "name": name,
+                    "df": df_tech if df_tech is not None else df
+                }
 
             if progress_callback:
                 progress_callback(min(1.0, (idx + 1) / total * 0.4))
@@ -158,6 +183,10 @@ class Backtester:
                     "profit_loss": (close_price - avg_price) * pos["qty"]
                 }
 
+                # 매수 후 최고가 갱신
+                pos["highest_price"] = max(pos.get("highest_price", avg_price), high_price)
+                is_partial_sold = pos.get("is_partial_sold", False)
+
                 # 장중 저가/고가 기준 긴급 손절 / 목표 익절 우선 감지
                 sell_signal = None
                 sell_price = close_price
@@ -172,12 +201,15 @@ class Backtester:
                         stop_loss_rate=self.stop_loss_rate,
                         target_profit_rate=self.target_profit_rate,
                         current_date=current_date,
-                        use_file_cooldown=True  # 백테스팅: 파일 기반 쿨다운
+                        use_file_cooldown=True,  # 백테스팅: 파일 기반 쿨다운
+                        is_partial_sold=is_partial_sold,
+                        highest_price=pos["highest_price"],
+                        holding_days=pos["holding_days"]
                     )
                     sell_price = min(close_price, avg_price * (1 + self.stop_loss_rate))
 
-                # [2] 목표 익절 (일중 고가가 목표 익절선 터치 시)
-                elif high_profit_rate >= self.target_profit_rate * 100:
+                # [2] 1차 익절 미실행 종목의 목표 익절 (일중 고가가 목표 익절선 터치 시)
+                elif high_profit_rate >= self.target_profit_rate * 100 and not is_partial_sold:
                     holding_dict["profit_rate"] = high_profit_rate
                     sell_signal = self.screener.evaluate_sell_signals_from_df(
                         holding=holding_dict,
@@ -186,14 +218,16 @@ class Backtester:
                         stop_loss_rate=self.stop_loss_rate,
                         target_profit_rate=self.target_profit_rate,
                         current_date=current_date,
-                        use_file_cooldown=True  # 백테스팅: 파일 기반 쿨다운
+                        use_file_cooldown=True,  # 백테스팅: 파일 기반 쿨다운
+                        is_partial_sold=False,
+                        highest_price=pos["highest_price"],
+                        holding_days=pos["holding_days"]
                     )
                     sell_price = max(close_price, avg_price * (1 + self.target_profit_rate))
 
-                # [3] 기술적 매도 (RSI 과열 및 데드크로스)
+                # [3] 기술적 매도 (트레일링 스탑, 타임컷, RSI 과열 및 데드크로스)
                 else:
-                    candles = sub_df.tail(65).to_dict("records")
-                    df_tech = self.screener.calculate_technical_indicators(candles, is_intraday=False)
+                    df_tech = sub_df.tail(65)
                     is_recently_bought = (pos["holding_days"] < 2)
                     sell_signal = self.screener.evaluate_sell_signals_from_df(
                         holding=holding_dict,
@@ -202,7 +236,10 @@ class Backtester:
                         stop_loss_rate=self.stop_loss_rate,
                         target_profit_rate=self.target_profit_rate,
                         current_date=current_date,
-                        use_file_cooldown=True  # 백테스팅: 파일 기반 쿨다운
+                        use_file_cooldown=True,  # 백테스팅: 파일 기반 쿨다운
+                        is_partial_sold=is_partial_sold,
+                        highest_price=pos["highest_price"],
+                        holding_days=pos["holding_days"]
                     )
                     sell_price = close_price
 
@@ -235,6 +272,10 @@ class Backtester:
                         "reason": sell_reason
                     })
 
+                    # 1차 익절 완료 처리
+                    if sell_signal.get("is_partial_take", False) or "1차익절" in sell_type or "분할익절" in sell_type:
+                        pos["is_partial_sold"] = True
+
                     # 손절 청산 시 쿨다운 등록 (백테스트 내부 추적)
                     if "손절" in sell_type and pos["qty"] <= sell_qty:
                         cooldown_map[code] = current_date
@@ -263,8 +304,7 @@ class Backtester:
                     first_df = first_info["df"]
                     first_sub = first_df[first_df["date"] <= current_date]
                     if len(first_sub) >= 25:
-                        first_candles = first_sub.tail(65).to_dict("records")
-                        first_df_tech = self.screener.calculate_technical_indicators(first_candles, is_intraday=False)
+                        first_df_tech = first_sub.tail(65)
                         if first_df_tech is not None and len(first_df_tech) >= 20:
                             last = first_df_tech.iloc[-1]
                             ma20 = float(last["ma20"]) if not pd.isna(last["ma20"]) else 0
@@ -291,9 +331,8 @@ class Backtester:
                         except (ValueError, TypeError):
                             continue
 
-                    candles = sub_df.tail(65).to_dict("records")
-                    df_tech = self.screener.calculate_technical_indicators(candles, is_intraday=False)
-                    
+                    df_tech = sub_df.tail(65)
+
                     # screener.py의 공통 evaluate_buy_signals_from_df 직접 호출!
                     buy_eval = self.screener.evaluate_buy_signals_from_df(
                         df=df_tech,
@@ -309,9 +348,10 @@ class Backtester:
                     if buy_eval:
                         buy_candidates.append(buy_eval)
 
-                # 점수 높은 순으로 정렬 후 상위 슬롯 매수 집행
+                # 점수 높은 순으로 정렬 후 1일 최대 신규 매수 제한(max_daily_buy) 적용
                 buy_candidates.sort(key=lambda x: x["score"], reverse=True)
-                for cand in buy_candidates[:available_slots]:
+                max_daily_buy = int(config.CURRENT_SETTINGS.get("max_daily_buy_count", 2))
+                for cand in buy_candidates[:min(available_slots, max_daily_buy)]:
                     code = cand["code"]
                     if code in holdings:
                         continue
@@ -319,9 +359,12 @@ class Backtester:
                     if buy_price <= 0:
                         continue
 
+                    rec_qty = cand.get("recommended_qty", 0)
                     max_buy_amt = min(self.budget_per_stock, cash)
-                    buy_qty = int(max_buy_amt // (buy_price * (1 + self.fee_rate)))
-                    if buy_qty <= 0:
+                    max_cap_qty = int(max_buy_amt // (buy_price * (1 + self.fee_rate)))
+                    buy_qty = max(1, min(max_cap_qty, rec_qty if rec_qty > 0 else max_cap_qty))
+
+                    if buy_qty <= 0 or (buy_qty * buy_price * (1 + self.fee_rate)) > cash:
                         continue
 
                     total_cost = buy_qty * buy_price * (1 + self.fee_rate)
@@ -332,7 +375,9 @@ class Backtester:
                         "qty": buy_qty,
                         "avg_buy_price": buy_price,
                         "buy_date": current_date,
-                        "holding_days": 0
+                        "holding_days": 0,
+                        "highest_price": buy_price,
+                        "is_partial_sold": False
                     }
 
                     reasons_str = " • ".join(cand.get("reasons", []))
