@@ -97,15 +97,15 @@ class TestTradingAlgorithm(unittest.TestCase):
             self.assertGreaterEqual(res_pass["score"], 45)
 
     def test_emergency_stop_loss_priority(self):
-        """긴급 손절 (-3.0%) 최우선권 및 2일 유예 무시 검증"""
+        """긴급 손절 (-5.0%) 최우선권 및 2일 유예 무시 검증"""
         holding = {
             "code": "005930",
             "name": "삼성전자",
             "quantity": 10,
             "avg_buy_price": 70000,
-            "current_price": 67000,
-            "profit_rate": -4.28,  # -3.0% 이하 손절 도달
-            "profit_loss": -30000
+            "current_price": 65000,
+            "profit_rate": -7.14,  # -5.0% 이하 손절 도달
+            "profit_loss": -50000
         }
         # 2일 이내 매수 종목으로 모킹
         self.screener._is_recently_bought = MagicMock(return_value=True)
@@ -117,15 +117,15 @@ class TestTradingAlgorithm(unittest.TestCase):
         self.assertEqual(sell_res["sell_ratio"], 1.0)
 
     def test_target_profit_partial_take(self):
-        """목표 익절 (+5.0%) 50% 분할 매도 및 2일 유예 무시 검증"""
+        """목표 익절 (+8.0%) 50% 분할 매도 및 2일 유예 무시 검증"""
         holding = {
             "code": "000660",
             "name": "SK하이닉스",
             "quantity": 10,
             "avg_buy_price": 150000,
-            "current_price": 160000,
-            "profit_rate": +6.67,  # +5.0% 이상 목표 익절 달성
-            "profit_loss": +100000
+            "current_price": 165000,
+            "profit_rate": +10.0,  # +8.0% 이상 목표 익절 달성
+            "profit_loss": +150000
         }
         self.screener._is_recently_bought = MagicMock(return_value=True)
 

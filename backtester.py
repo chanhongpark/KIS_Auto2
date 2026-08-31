@@ -12,11 +12,12 @@ import numpy as np
 import FinanceDataReader as fdr
 
 import config
-from screener import StockScreener, COOLDOWN_FILE
+from screener import StockScreener
 from core.indicators import calculate_technical_indicators
 from core.strategy import (
     evaluate_buy_signals_from_df as core_evaluate_buy_signals_from_df,
-    evaluate_sell_signals_from_df as core_evaluate_sell_signals_from_df
+    evaluate_sell_signals_from_df as core_evaluate_sell_signals_from_df,
+    get_market_regime
 )
 
 logger = logging.getLogger("Backtester")
@@ -32,10 +33,10 @@ class Backtester:
         initial_capital: float = 10000000.0,
         budget_per_stock: float = 1000000.0,
         max_holdings: int = 5,
-        target_profit_rate: float = 0.05,
-        stop_loss_rate: float = -0.03,
-        fee_rate: float = 0.0015,       # 매수/매도 수수료 (0.15%)
-        tax_rate: float = 0.0020        # 매도 시 거래세 (0.20%)
+        target_profit_rate: float = 0.08,   # 개선 1: +8% 목표 익절
+        stop_loss_rate: float = -0.05,       # 개선 2: -5% 동적 손절 하한
+        fee_rate: float = 0.0015,           # 매수/매도 수수료 (0.15%)
+        tax_rate: float = 0.0020            # 매도 시 거래세 (0.20%)
     ):
         self.start_date = start_date
         self.end_date = end_date
@@ -50,7 +51,7 @@ class Backtester:
         self.screener = StockScreener()
 
     def fetch_universe_data(self, progress_callback=None) -> Dict[str, pd.DataFrame]:
-        """유니버스 전 종목에 대해 백테스트 시작일 이전 100영업일부터의 일봉 데이터 다운로드 및 로컬 캐싱"""
+        """유니버스 전 종목에 대해 백테스트 시작일 이전 120영업일부터의 일봉 데이터 다운로드 및 로컬 캐싱"""
         data_map = {}
         start_dt = pd.to_datetime(self.start_date) - datetime.timedelta(days=120)
         start_str = start_dt.strftime("%Y-%m-%d")
@@ -69,6 +70,10 @@ class Backtester:
             if os.path.exists(cache_file):
                 try:
                     df = pd.read_pickle(cache_file)
+                    if df is not None and not df.empty:
+                        df["date"] = pd.to_datetime(df["date"].astype(str)).dt.strftime("%Y-%m-%d")
+                        if "ma5" not in df.columns or "atr" not in df.columns:
+                            df = calculate_technical_indicators(df, is_intraday=False, atr_period=atr_period)
                 except Exception as e:
                     logger.warning(f"[{name}({code})] 캐시 로드 실패: {e}")
                     df = None
@@ -94,79 +99,114 @@ class Backtester:
                                 rename_cols[col] = "low"
                             elif "volume" in col_lower or "거래량" in col_lower:
                                 rename_cols[col] = "volume"
-                        df = df.rename(columns=rename_cols)
-                        df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y%m%d")
-                        try:
-                            df.to_pickle(cache_file)
-                        except Exception as ce:
-                            logger.warning(f"[{name}({code})] 캐시 저장 실패: {ce}")
-                except Exception as e:
-                    logger.warning(f"[{name}({code})] 백테스트 데이터 수집 실패: {e}")
+                            elif "change" in col_lower or "등락" in col_lower:
+                                rename_cols[col] = "change_rate"
 
-            if df is not None and not df.empty and len(df) >= 60:
-                # 전체 일봉 DataFrame에 대해 보조지표를 1회 사전 계산 (시뮬레이션 루프 속도 100배 가속)
-                df_tech = calculate_technical_indicators(df, is_intraday=False, atr_period=atr_period)
+                        df = df.rename(columns=rename_cols)
+                        df["date"] = pd.to_datetime(df["date"].astype(str)).dt.strftime("%Y-%m-%d")
+                        df = df.sort_values(by="date").reset_index(drop=True)
+
+                        # core 순수 지표 계산 함수 적용
+                        df = calculate_technical_indicators(df, is_intraday=False, atr_period=atr_period)
+                        df.to_pickle(cache_file)
+                except Exception as e:
+                    logger.warning(f"[{name}({code})] FDR 데이터 수집 실패: {e}")
+                    df = None
+
+            if df is not None and not df.empty:
                 data_map[code] = {
                     "name": name,
-                    "df": df_tech if df_tech is not None else df
+                    "market": item.get("market", "KOSPI"),
+                    "df": df
                 }
 
             if progress_callback:
-                progress_callback(min(1.0, (idx + 1) / total * 0.4))
+                progress_callback((idx + 1) / total * 0.4)
 
         return data_map
 
+    def fetch_benchmark_data(self) -> Optional[pd.DataFrame]:
+        """벤치마크(KOSPI 지수) 일별 데이터 다운로드"""
+        try:
+            bench_df = fdr.DataReader("KS11", self.start_date, self.end_date)
+            if bench_df is not None and not bench_df.empty:
+                bench_df = bench_df.reset_index()
+                bench_df["date"] = pd.to_datetime(bench_df["Date"]).dt.strftime("%Y-%m-%d")
+                first_close = float(bench_df.iloc[0]["Close"])
+                bench_df["benchmark_return"] = (bench_df["Close"] - first_close) / first_close * 100
+                return bench_df[["date", "Close", "benchmark_return"]]
+        except Exception as e:
+            logger.warning(f"KOSPI 벤치마크 데이터 로드 실패: {e}")
+        return None
+
     def run(self, progress_callback=None) -> Dict[str, Any]:
-        """screener.py 및 core.strategy의 공통 알고리즘을 사용하여 백테스팅 실행"""
+        """과거 데이터 기반 일별 전략 백테스팅 시뮬레이션 메인 루프"""
         logger.info(f"=== [Backtester] 백테스트 시작: {self.start_date} ~ {self.end_date} ===")
 
-        if os.path.exists(COOLDOWN_FILE):
-            try:
-                os.remove(COOLDOWN_FILE)
-                logger.info("백테스트 쿨다운 임시 파일 초기화 완료")
-            except Exception as e:
-                logger.warning(f"백테스트 쿨다운 파일 초기화 실패: {e}")
-
         universe_data = self.fetch_universe_data(progress_callback=progress_callback)
-
         if not universe_data:
-            return {"error": "백테스트 유니버스 데이터를 불러오지 못했습니다."}
+            return {"error": "유니버스 데이터를 불러올 수 없습니다."}
 
+        bench_df = self.fetch_benchmark_data()
+
+        # 전체 거래일 목록 추출
         all_dates = set()
-        for code, info in universe_data.items():
-            df = info["df"]
-            df_filtered = df[df["date"] >= self.start_date.replace("-", "")]
-            all_dates.update(df_filtered["date"].tolist())
+        for c, v in universe_data.items():
+            df = v["df"]
+            dates = df[(df["date"] >= self.start_date) & (df["date"] <= self.end_date)]["date"].tolist()
+            all_dates.update(dates)
 
-        trading_dates = sorted(list(all_dates))
-        if not trading_dates:
-            return {"error": "지정된 기간 내 거래일 데이터가 존재하지 않습니다."}
+        trade_dates = sorted(list(all_dates))
+        if not trade_dates:
+            return {"error": "선택한 기간 내 거래일 데이터가 존재하지 않습니다."}
 
+        # 시뮬레이션 상태 변수
         cash = self.initial_capital
-        holdings = {}
-        trade_history = []
-        daily_equity = []
-        cooldown_map = {}
+        holdings: Dict[str, Dict[str, Any]] = {}
+        daily_equity_history: List[Dict[str, Any]] = []
+        trade_history: List[Dict[str, Any]] = []
 
-        total_days = len(trading_dates)
+        cooldown_days = int(config.CURRENT_SETTINGS.get("cooldown_days", 4))
+        cooldown_until: Dict[str, str] = {} # code -> date string
+        daily_buy_count_limit = int(config.CURRENT_SETTINGS.get("max_daily_buy_count", 2))
 
-        for day_idx, current_date in enumerate(trading_dates):
+        total_sim_days = len(trade_dates)
+
+        # 일별 시뮬레이션 루프
+        for day_idx, current_date in enumerate(trade_dates):
+            current_dt = pd.to_datetime(current_date)
+
             # -------------------------------------------------------------
-            # 1. 보유 종목 매도 & 리스크 관리
+            # [Step 1: 당일 시장 국면 (Market Regime) 판별 및 프리셋 동적 적용]
             # -------------------------------------------------------------
-            to_remove = []
+            market_regime = {"regime": "BULL"}
+            if bench_df is not None and not bench_df.empty:
+                bench_sub = bench_df[bench_df["date"] <= current_date]
+                if len(bench_sub) >= 20:
+                    market_regime = get_market_regime(bench_sub, ma_period=int(config.CURRENT_SETTINGS.get("market_regime_ma_period", 20)))
+
+            eff_settings = config.get_effective_settings_for_regime(market_regime.get("regime", "BULL"), config.CURRENT_SETTINGS)
+            daily_stop_loss_rate = float(eff_settings.get("stop_loss_rate", self.stop_loss_rate))
+            daily_target_profit_rate = float(eff_settings.get("target_profit_rate", self.target_profit_rate))
+            daily_buy_count_limit = int(eff_settings.get("max_daily_buy_count", 2))
+
+            # -------------------------------------------------------------
+            # [Step 2: 보유 종목 평가 및 매도 시그널 검증]
+            # -------------------------------------------------------------
+            stocks_to_delete = []
+
             for code, pos in list(holdings.items()):
-                pos["holding_days"] += 1
-                stock_info = universe_data.get(code)
-                if not stock_info:
+                if code not in universe_data:
                     continue
 
-                df_stock = stock_info["df"]
-                sub_df = df_stock[df_stock["date"] <= current_date]
+                stock_full_df = universe_data[code]["df"]
+                sub_df = stock_full_df[stock_full_df["date"] <= current_date]
                 if sub_df.empty:
                     continue
 
                 current_row = sub_df.iloc[-1]
+                pos["holding_days"] += 1
+
                 close_price = float(current_row["close"])
                 high_price = float(current_row["high"])
                 low_price = float(current_row["low"])
@@ -189,73 +229,42 @@ class Backtester:
                 pos["highest_price"] = max(pos.get("highest_price", avg_price), high_price)
                 is_partial_sold = pos.get("is_partial_sold", False)
 
-                sell_signal = None
+                df_tech = sub_df.tail(65)
+                is_recently_bought = (pos["holding_days"] < 2)
+
+                sell_signal = core_evaluate_sell_signals_from_df(
+                    holding=holding_dict,
+                    df=df_tech,
+                    is_recently_bought=is_recently_bought,
+                    stop_loss_rate=daily_stop_loss_rate,
+                    target_profit_rate=daily_target_profit_rate,
+                    settings=eff_settings,
+                    is_partial_sold=is_partial_sold,
+                    highest_price=pos["highest_price"],
+                    holding_days=pos["holding_days"],
+                    market_regime=market_regime
+                )
+
                 sell_price = close_price
-
-                # [1] 긴급 손절 (일중 저가가 손절선 터치 시)
-                if low_profit_rate <= self.stop_loss_rate * 100:
-                    holding_dict["profit_rate"] = low_profit_rate
-                    sell_signal = self.screener.evaluate_sell_signals_from_df(
-                        holding=holding_dict,
-                        df=None,
-                        is_recently_bought=False,
-                        stop_loss_rate=self.stop_loss_rate,
-                        target_profit_rate=self.target_profit_rate,
-                        current_date=current_date,
-                        use_file_cooldown=True,
-                        is_partial_sold=is_partial_sold,
-                        highest_price=pos["highest_price"],
-                        holding_days=pos["holding_days"]
-                    )
-                    sell_price = min(close_price, avg_price * (1 + self.stop_loss_rate))
-
-                # [2] 1차 익절 미실행 종목의 목표 익절 (일중 고가가 목표 익절선 터치 시)
-                elif high_profit_rate >= self.target_profit_rate * 100 and not is_partial_sold:
-                    holding_dict["profit_rate"] = high_profit_rate
-                    sell_signal = self.screener.evaluate_sell_signals_from_df(
-                        holding=holding_dict,
-                        df=None,
-                        is_recently_bought=False,
-                        stop_loss_rate=self.stop_loss_rate,
-                        target_profit_rate=self.target_profit_rate,
-                        current_date=current_date,
-                        use_file_cooldown=True,
-                        is_partial_sold=False,
-                        highest_price=pos["highest_price"],
-                        holding_days=pos["holding_days"]
-                    )
-                    sell_price = max(close_price, avg_price * (1 + self.target_profit_rate))
-
-                # [3] 기술적 매도 (트레일링 스탑, 타임컷, RSI 과열 및 데드크로스)
-                else:
-                    df_tech = sub_df.tail(65)
-                    is_recently_bought = (pos["holding_days"] < 2)
-                    sell_signal = self.screener.evaluate_sell_signals_from_df(
-                        holding=holding_dict,
-                        df=df_tech,
-                        is_recently_bought=is_recently_bought,
-                        stop_loss_rate=self.stop_loss_rate,
-                        target_profit_rate=self.target_profit_rate,
-                        current_date=current_date,
-                        use_file_cooldown=True,
-                        is_partial_sold=is_partial_sold,
-                        highest_price=pos["highest_price"],
-                        holding_days=pos["holding_days"]
-                    )
-                    sell_price = close_price
-
                 if sell_signal:
+                    if sell_signal.get("is_urgent", False):
+                        sell_price = min(close_price, avg_price * (1 + daily_stop_loss_rate))
+                    elif "익절" in sell_signal.get("sell_type", "") and not is_partial_sold:
+                        sell_price = max(close_price, avg_price * (1 + daily_target_profit_rate))
+
                     sell_qty = sell_signal.get("sell_qty", pos["qty"])
                     sell_type = sell_signal.get("sell_type", "매도")
                     sell_reason = " • ".join(sell_signal.get("reasons", []))
 
-                    gross_amt = sell_qty * sell_price
-                    fee_tax = gross_amt * (self.fee_rate + self.tax_rate)
-                    net_amt = gross_amt - fee_tax
-                    cash += net_amt
+                    gross_amount = sell_qty * sell_price
+                    fee_cost = gross_amount * self.fee_rate
+                    tax_cost = gross_amount * self.tax_rate
+                    net_amount = gross_amount - (fee_cost + tax_cost)
 
-                    profit_krw = net_amt - (sell_qty * avg_price * (1 + self.fee_rate))
-                    profit_pct = (profit_krw / (sell_qty * avg_price)) * 100
+                    profit_krw = (sell_price - avg_price) * sell_qty - (fee_cost + tax_cost)
+                    profit_pct = (profit_krw / (avg_price * sell_qty)) * 100
+
+                    cash += net_amount
 
                     trade_history.append({
                         "date": current_date,
@@ -265,220 +274,203 @@ class Backtester:
                         "sell_type": sell_type,
                         "price": sell_price,
                         "qty": sell_qty,
-                        "amount": net_amt,
+                        "amount": gross_amount,
+                        "fee_tax": fee_cost + tax_cost,
                         "profit_krw": profit_krw,
                         "profit_pct": profit_pct,
                         "holding_days": pos["holding_days"],
-                        "reason": sell_reason
+                        "reasons": sell_reason
                     })
 
-                    if sell_signal.get("is_partial_take", False) or "1차익절" in sell_type or "분할익절" in sell_type:
+                    # 손절 시 인메모리 쿨다운 등록
+                    if sell_signal.get("is_urgent", False) or "손절" in sell_type:
+                        future_date = (current_dt + datetime.timedelta(days=cooldown_days * 2)).strftime("%Y-%m-%d")
+                        cooldown_until[code] = future_date
+
+                    # 분할 익절 처리
+                    if sell_signal.get("is_partial_take", False) and sell_qty < pos["qty"]:
+                        pos["qty"] -= sell_qty
                         pos["is_partial_sold"] = True
+                    else:
+                        stocks_to_delete.append(code)
 
-                    if "손절" in sell_type and pos["qty"] <= sell_qty:
-                        cooldown_map[code] = current_date
-
-                    pos["qty"] -= sell_qty
-                    if pos["qty"] <= 0:
-                        to_remove.append(code)
-
-            for code in to_remove:
-                if code in holdings:
-                    del holdings[code]
+            for c in stocks_to_delete:
+                del holdings[c]
 
             # -------------------------------------------------------------
-            # 2. 15:15 종가 매수 스크리닝
+            # [Step 3: 15:15 종가 매수 종목 스크리닝 및 발주]
             # -------------------------------------------------------------
             available_slots = self.max_holdings - len(holdings)
-            if available_slots > 0 and cash >= self.budget_per_stock:
-                held_codes = set(holdings.keys())
-                buy_candidates = []
+            today_buy_candidates = []
 
-                market_regime = None
-                if config.CURRENT_SETTINGS.get("market_regime_filter_enabled", True):
-                    first_code = next(iter(universe_data))
-                    first_info = universe_data[first_code]
-                    first_df = first_info["df"]
-                    first_sub = first_df[first_df["date"] <= current_date]
-                    if len(first_sub) >= 25:
-                        first_df_tech = first_sub.tail(65)
-                        if first_df_tech is not None and len(first_df_tech) >= 20:
-                            last = first_df_tech.iloc[-1]
-                            ma20 = float(last["ma20"]) if not pd.isna(last["ma20"]) else 0
-                            close = float(last["close"])
-                            if ma20 > 0:
-                                regime = "WEAK" if close < ma20 else "NORMAL"
-                                market_regime = {"regime": regime, "below_ma20": close < ma20, "downtrend": False}
-
-                for code, stock_info in universe_data.items():
-                    df_stock = stock_info["df"]
-                    sub_df = df_stock[df_stock["date"] <= current_date]
-                    if len(sub_df) < 25:
-                        continue
-
-                    if config.CURRENT_SETTINGS.get("cooldown_enabled", True) and code in cooldown_map:
-                        cooldown_days = int(config.CURRENT_SETTINGS.get("cooldown_days", 4))
-                        try:
-                            from datetime import datetime as dt
-                            stop_dt = dt.strptime(cooldown_map[code], "%Y%m%d")
-                            cur_dt = dt.strptime(current_date, "%Y%m%d")
-                            if (cur_dt - stop_dt).days < cooldown_days:
-                                continue
-                        except (ValueError, TypeError):
-                            continue
-
-                    df_tech = sub_df.tail(65)
-
-                    buy_eval = self.screener.evaluate_buy_signals_from_df(
-                        df=df_tech,
-                        code=code,
-                        name=stock_info["name"],
-                        held_codes=held_codes,
-                        budget=self.budget_per_stock,
-                        market_regime=market_regime,
-                        current_date=current_date,
-                        use_file_cooldown=True
-                    )
-
-                    if buy_eval:
-                        buy_candidates.append(buy_eval)
-
-                buy_candidates.sort(key=lambda x: x["score"], reverse=True)
-                max_daily_buy = int(config.CURRENT_SETTINGS.get("max_daily_buy_count", 2))
-                for cand in buy_candidates[:min(available_slots, max_daily_buy)]:
-                    code = cand["code"]
+            if available_slots > 0:
+                for code, v in universe_data.items():
                     if code in holdings:
                         continue
-                    buy_price = cand["current_price"]
-                    if buy_price <= 0:
+
+                    # 손절 쿨다운 체크
+                    if code in cooldown_until and current_date <= cooldown_until[code]:
                         continue
 
-                    rec_qty = cand.get("recommended_qty", 0)
-                    max_buy_amt = min(self.budget_per_stock, cash)
-                    max_cap_qty = int(max_buy_amt // (buy_price * (1 + self.fee_rate)))
-                    buy_qty = max(1, min(max_cap_qty, rec_qty if rec_qty > 0 else max_cap_qty))
-
-                    if buy_qty <= 0 or (buy_qty * buy_price * (1 + self.fee_rate)) > cash:
+                    df = v["df"]
+                    sub_df = df[df["date"] <= current_date]
+                    if len(sub_df) < 30:
                         continue
 
-                    total_cost = buy_qty * buy_price * (1 + self.fee_rate)
-                    cash -= total_cost
+                    sub_65 = sub_df.tail(65)
 
-                    holdings[code] = {
-                        "name": cand["name"],
-                        "qty": buy_qty,
-                        "avg_buy_price": buy_price,
-                        "buy_date": current_date,
-                        "holding_days": 0,
-                        "highest_price": buy_price,
-                        "is_partial_sold": False
-                    }
+                    # core 매수 신호 단일 원천 함수 호출
+                    signal = core_evaluate_buy_signals_from_df(
+                        df=sub_65,
+                        code=code,
+                        name=v["name"],
+                        held_codes=set(holdings.keys()),
+                        budget=self.budget_per_stock,
+                        market_regime=market_regime,
+                        settings=eff_settings,
+                        is_in_cooldown=False
+                    )
 
-                    reasons_str = " • ".join(cand.get("reasons", []))
-                    trade_history.append({
-                        "date": current_date,
-                        "code": code,
-                        "name": cand["name"],
-                        "action": "BUY",
-                        "sell_type": cand.get("buy_type", "신규매수"),
-                        "price": buy_price,
-                        "qty": buy_qty,
-                        "amount": total_cost,
-                        "profit_krw": 0.0,
-                        "profit_pct": 0.0,
-                        "holding_days": 0,
-                        "reason": f"🎯 종가 매수 점수 {cand['score']}점 (추세 {cand['trend_score']}/수급 {cand['supply_score']}/모멘텀 {cand['momentum_score']}) | {reasons_str}"
-                    })
+                    if signal and signal.get("score", 0) >= signal.get("buy_threshold", 45):
+                        today_buy_candidates.append(signal)
+
+                # 점수 높은 순 정렬 후 상위 종목 매수
+                today_buy_candidates.sort(key=lambda x: (x.get("score", 0), x.get("vol_ratio", 0)), reverse=True)
+                actual_buy_count = 0
+
+                for candidate in today_buy_candidates:
+                    if actual_buy_count >= min(available_slots, daily_buy_count_limit):
+                        break
+
+                    c_code = candidate["code"]
+                    c_name = candidate["name"]
+                    c_price = candidate["current_price"]
+                    c_qty = candidate.get("recommended_qty", int(self.budget_per_stock // c_price))
+
+                    if c_qty <= 0:
+                        c_qty = 1
+
+                    gross_buy_amt = c_qty * c_price
+                    buy_fee = gross_buy_amt * self.fee_rate
+                    total_buy_required = gross_buy_amt + buy_fee
+
+                    if cash >= total_buy_required:
+                        cash -= total_buy_required
+                        holdings[c_code] = {
+                            "name": c_name,
+                            "qty": c_qty,
+                            "avg_buy_price": c_price,
+                            "entry_date": current_date,
+                            "holding_days": 0,
+                            "highest_price": c_price,
+                            "is_partial_sold": False
+                        }
+
+                        trade_history.append({
+                            "date": current_date,
+                            "code": c_code,
+                            "name": c_name,
+                            "action": "BUY",
+                            "sell_type": "종가 매수",
+                            "price": c_price,
+                            "qty": c_qty,
+                            "amount": gross_buy_amt,
+                            "fee_tax": buy_fee,
+                            "profit_krw": 0.0,
+                            "profit_pct": 0.0,
+                            "holding_days": 0,
+                            "reasons": " • ".join(candidate.get("reasons", []))
+                        })
+
+                        actual_buy_count += 1
+                        available_slots -= 1
 
             # -------------------------------------------------------------
-            # 3. 당일 평가 총자산(Equity) 기록
+            # [Step 4: 당일 마감 총 평가 자산 산출]
             # -------------------------------------------------------------
-            stock_eval = 0.0
-            for code, pos in holdings.items():
-                stock_info = universe_data.get(code)
-                if stock_info:
-                    df_stock = stock_info["df"]
-                    day_rows = df_stock[df_stock["date"] == current_date]
-                    if not day_rows.empty:
-                        c_p = float(day_rows.iloc[0]["close"])
-                        stock_eval += pos["qty"] * c_p
+            current_stock_eval = 0.0
+            for h_code, h_pos in holdings.items():
+                if h_code in universe_data:
+                    h_df = universe_data[h_code]["df"]
+                    h_sub = h_df[h_df["date"] <= current_date]
+                    if not h_sub.empty:
+                        c_prc = float(h_sub.iloc[-1]["close"])
+                        current_stock_eval += h_pos["qty"] * c_prc
                     else:
-                        stock_eval += pos["qty"] * pos["avg_buy_price"]
+                        current_stock_eval += h_pos["qty"] * h_pos["avg_buy_price"]
 
-            tot_equity = cash + stock_eval
-            daily_equity.append({
+            total_equity = cash + current_stock_eval
+            return_pct = (total_equity - self.initial_capital) / self.initial_capital * 100
+
+            daily_equity_history.append({
                 "date": current_date,
-                "equity": tot_equity,
+                "total_equity": total_equity,
                 "cash": cash,
-                "stock_eval": stock_eval,
-                "holding_count": len(holdings)
+                "stock_eval": current_stock_eval,
+                "return_pct": return_pct,
+                "holdings_count": len(holdings)
             })
 
             if progress_callback:
-                progress_callback(0.4 + (day_idx + 1) / total_days * 0.6)
+                progress_callback(0.4 + (day_idx + 1) / total_sim_days * 0.6)
 
-        # -----------------------------------------------------------------
-        # 4. 종합 성과 지표(Metrics) 계산
-        # -----------------------------------------------------------------
-        eq_df = pd.DataFrame(daily_equity)
-        if eq_df.empty:
-            return {"error": "시뮬레이션 결과 데이터가 비어 있습니다."}
+        # -------------------------------------------------------------
+        # [Step 5: 성과 지표 계산 및 결과 패키징]
+        # -------------------------------------------------------------
+        daily_eq_df = pd.DataFrame(daily_equity_history)
+        trades_df = pd.DataFrame(trade_history)
 
-        eq_df["return_pct"] = (eq_df["equity"] - self.initial_capital) / self.initial_capital * 100
-        eq_df["peak"] = eq_df["equity"].cummax()
-        eq_df["drawdown"] = (eq_df["equity"] - eq_df["peak"]) / eq_df["peak"] * 100
+        if not daily_eq_df.empty:
+            daily_eq_df["peak"] = daily_eq_df["total_equity"].cummax()
+            daily_eq_df["drawdown"] = (daily_eq_df["total_equity"] - daily_eq_df["peak"]) / daily_eq_df["peak"] * 100
+            mdd = daily_eq_df["drawdown"].min()
+            final_equity = float(daily_eq_df.iloc[-1]["total_equity"])
+            total_return_pct = (final_equity - self.initial_capital) / self.initial_capital * 100
+        else:
+            mdd = 0.0
+            final_equity = self.initial_capital
+            total_return_pct = 0.0
 
-        final_equity = float(eq_df.iloc[-1]["equity"])
-        total_return_pct = (final_equity - self.initial_capital) / self.initial_capital * 100
-        mdd_pct = float(eq_df["drawdown"].min())
+        num_days = len(trade_dates)
+        cagr = ((final_equity / self.initial_capital) ** (252.0 / max(1, num_days)) - 1) * 100 if num_days > 0 and final_equity > 0 else 0.0
 
-        days_total = max(1, (pd.to_datetime(self.end_date) - pd.to_datetime(self.start_date)).days)
-        years = days_total / 365.25
-        cagr_pct = ((final_equity / self.initial_capital) ** (1 / years) - 1) * 100 if final_equity > 0 and years > 0 else 0.0
+        # 매매 승률 및 손익비
+        if not trades_df.empty:
+            sells_df = trades_df[trades_df["action"] == "SELL"]
+            win_trades = sells_df[sells_df["profit_krw"] > 0]
+            loss_trades = sells_df[sells_df["profit_krw"] <= 0]
 
-        sell_trades = [t for t in trade_history if t["action"] == "SELL"]
-        win_trades = [t for t in sell_trades if t["profit_krw"] > 0]
-        loss_trades = [t for t in sell_trades if t["profit_krw"] <= 0]
+            total_wins = len(win_trades)
+            total_losses = len(loss_trades)
+            win_rate = (total_wins / len(sells_df) * 100) if len(sells_df) > 0 else 0.0
 
-        win_rate = (len(win_trades) / len(sell_trades) * 100) if sell_trades else 0.0
-        total_win_amt = sum([t["profit_krw"] for t in win_trades])
-        total_loss_amt = abs(sum([t["profit_krw"] for t in loss_trades]))
-        profit_factor = (total_win_amt / total_loss_amt) if total_loss_amt > 0 else (999.0 if total_win_amt > 0 else 0.0)
+            total_gain = win_trades["profit_krw"].sum()
+            total_loss = abs(loss_trades["profit_krw"].sum())
+            profit_factor = (total_gain / total_loss) if total_loss > 0 else 999.0
+        else:
+            total_wins = 0
+            total_losses = 0
+            win_rate = 0.0
+            profit_factor = 0.0
 
-        benchmark_df = None
-        try:
-            kospi = fdr.DataReader("KS11", self.start_date, self.end_date).reset_index()
-            if not kospi.empty:
-                kospi["date"] = pd.to_datetime(kospi["Date"]).dt.strftime("%Y%m%d")
-                k_start = float(kospi.iloc[0]["Close"])
-                kospi["benchmark_return"] = (kospi["Close"] - k_start) / k_start * 100
-                benchmark_df = kospi[["date", "Close", "benchmark_return"]].rename(columns={"Close": "kospi_close"})
-        except Exception as e:
-            logger.warning(f"KOSPI 벤치마크 데이터 로드 실패: {e}")
-
-        if os.path.exists(COOLDOWN_FILE):
-            try:
-                os.remove(COOLDOWN_FILE)
-                logger.info("백테스트 쿨다운 임시 파일 정리 완료")
-            except Exception as e:
-                logger.warning(f"백테스트 쿨다운 파일 정리 실패: {e}")
+        summary = {
+            "initial_capital": self.initial_capital,
+            "final_equity": final_equity,
+            "total_profit_krw": final_equity - self.initial_capital,
+            "total_return_pct": total_return_pct,
+            "cagr_pct": cagr,
+            "mdd_pct": mdd,
+            "total_trades": len(trades_df),
+            "sell_trades_count": total_wins + total_losses,
+            "win_count": total_wins,
+            "loss_count": total_losses,
+            "win_rate": win_rate,
+            "profit_factor": profit_factor
+        }
 
         return {
-            "summary": {
-                "initial_capital": self.initial_capital,
-                "final_equity": final_equity,
-                "total_return_pct": total_return_pct,
-                "cagr_pct": cagr_pct,
-                "mdd_pct": mdd_pct,
-                "total_trades": len(trade_history),
-                "sell_trades_count": len(sell_trades),
-                "win_rate": win_rate,
-                "win_count": len(win_trades),
-                "loss_count": len(loss_trades),
-                "profit_factor": profit_factor,
-                "total_profit_krw": final_equity - self.initial_capital
-            },
-            "daily_equity": eq_df,
-            "trade_history": pd.DataFrame(trade_history),
-            "benchmark_df": benchmark_df
+            "summary": summary,
+            "daily_equity": daily_eq_df,
+            "trade_history": trades_df,
+            "benchmark_df": bench_df
         }
