@@ -1,21 +1,43 @@
 """
 KIS API Client Module
 한국투자증권 Open API (국내주식 시세, 계좌 잔고, 매수/매도 주문)
+HTTP Session 커넥션 풀링(Keep-Alive) 및 전역 동기화 Rate Limiter 적용
 """
 import os
 import time
-import json
 import logging
-import requests
 import datetime
 import threading
 from typing import Dict, Any, List, Optional
-import pandas as pd
+import requests
+from requests.adapters import HTTPAdapter
 
 import config
 from time_utils import now, today
+from core.storage import safe_load_json, atomic_save_json
+from core.exceptions import KISApiError, KISAuthError, KISRateLimitError, KISOrderError
+
+class _GlobalRateLimiter:
+    """모든 KISApiClient 인스턴스가 공유하는 전역 초당 호출 제한기"""
+    def __init__(self, delay: float = 0.15):
+        self.delay = delay
+        self._last_call_time = 0.0
+        self._lock = threading.Lock()
+
+    def wait(self):
+        with self._lock:
+            elapsed = time.time() - self._last_call_time
+            if elapsed < self.delay:
+                time.sleep(self.delay - elapsed)
+            self._last_call_time = time.time()
+
+_rate_limiter = _GlobalRateLimiter(0.15)
+
 
 class KISApiClient:
+    _shared_session: Optional[requests.Session] = None
+    _session_lock = threading.Lock()
+
     def __init__(self):
         self.logger = logging.getLogger("KISApi")
         self.app_key = config.APP_KEY
@@ -26,11 +48,22 @@ class KISApiClient:
 
         self.access_token: Optional[str] = None
         self.token_expired_at: Optional[datetime.datetime] = None
-        self._last_call_time = 0.0
         self._token_lock = threading.RLock()
 
         # 토큰 파일 로드
         self._load_token_file()
+
+    @classmethod
+    def get_session(cls) -> requests.Session:
+        """연결 재사용을 위한 싱글톤 requests.Session 반환"""
+        with cls._session_lock:
+            if cls._shared_session is None:
+                s = requests.Session()
+                adapter = HTTPAdapter(pool_connections=20, pool_maxsize=20, max_retries=0)
+                s.mount("https://", adapter)
+                s.mount("http://", adapter)
+                cls._shared_session = s
+            return cls._shared_session
 
     @property
     def is_mock(self) -> bool:
@@ -45,11 +78,8 @@ class KISApiClient:
         prefix = "token_kis_mock.json" if self.is_mock else "token_kis_real.json"
         return os.path.join(os.path.dirname(__file__), prefix)
 
-    def _rate_limit(self, delay: float = 0.15):
-        elapsed = time.time() - self._last_call_time
-        if elapsed < delay:
-            time.sleep(delay - elapsed)
-        self._last_call_time = time.time()
+    def _rate_limit(self):
+        _rate_limiter.wait()
 
     def _request_with_retry(
         self,
@@ -62,30 +92,28 @@ class KISApiClient:
         timeout: float = 8.0
     ) -> requests.Response:
         """429 Too Many Requests 및 일시적 네트워크 장애에 대한 지수 백오프 재시도 요청"""
+        session = self.get_session()
         last_resp = None
+
         for attempt in range(1, max_retries + 1):
             self._rate_limit()
             try:
-                # 연결 타임아웃과 읽기 타임아웃을 분리하여 네트워크 장애 시 빠르게 실패
                 conn_timeout = min(timeout, 3.0)
                 read_timeout = timeout
                 if method.upper() == "GET":
-                    resp = requests.get(url, headers=headers, params=params, timeout=(conn_timeout, read_timeout))
+                    resp = session.get(url, headers=headers, params=params, timeout=(conn_timeout, read_timeout))
                 else:
-                    resp = requests.post(url, headers=headers, json=json_data, timeout=(conn_timeout, read_timeout))
+                    resp = session.post(url, headers=headers, json=json_data, timeout=(conn_timeout, read_timeout))
 
-                # 정상 응답이면 즉시 반환
                 if resp.status_code == 200:
                     return resp
 
                 last_resp = resp
-                # 429 Too Many Requests 또는 5xx 서버 일시 오류 시 재시도
                 if resp.status_code in (429, 500, 502, 503, 504):
                     wait_sec = attempt * 0.5
                     self.logger.warning(f"[{method}] {url} HTTP {resp.status_code} 감지 - {wait_sec:.1f}초 후 재시도 ({attempt}/{max_retries})")
                     time.sleep(wait_sec)
                 else:
-                    # 기타 4xx 클라이언트 에러는 재시도 없이 반환
                     return resp
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
                 wait_sec = attempt * 0.5
@@ -93,40 +121,35 @@ class KISApiClient:
                 time.sleep(wait_sec)
             except Exception as e:
                 self.logger.error(f"[{method}] {url} 요청 중 예외: {e}")
-                raise e
+                raise KISApiError(f"HTTP 요청 예외: {e}")
 
         return last_resp if last_resp is not None else requests.Response()
 
     def _load_token_file(self):
         with self._token_lock:
-            if os.path.exists(self.token_file):
-                try:
-                    with open(self.token_file, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                        self.access_token = data.get("access_token")
-                        exp_str = data.get("token_expired_at")
-                        if exp_str:
-                            self.token_expired_at = datetime.datetime.fromisoformat(exp_str)
-                            if self.token_expired_at.tzinfo is None:
-                                self.token_expired_at = self.token_expired_at.replace(tzinfo=datetime.timezone(datetime.timedelta(hours=9)))
-                except Exception as e:
-                    self.logger.warning(f"토큰 파일 로드 실패: {e}")
+            data = safe_load_json(self.token_file, default={})
+            if data:
+                self.access_token = data.get("access_token")
+                exp_str = data.get("token_expired_at")
+                if exp_str:
+                    try:
+                        self.token_expired_at = datetime.datetime.fromisoformat(exp_str)
+                        if self.token_expired_at.tzinfo is None:
+                            self.token_expired_at = self.token_expired_at.replace(tzinfo=datetime.timezone(datetime.timedelta(hours=9)))
+                    except Exception:
+                        self.token_expired_at = None
 
     def _save_token_file(self):
         with self._token_lock:
-            try:
-                with open(self.token_file, "w", encoding="utf-8") as f:
-                    json.dump({
-                        "access_token": self.access_token,
-                        "token_expired_at": self.token_expired_at.isoformat() if self.token_expired_at else ""
-                    }, f)
-            except Exception as e:
-                self.logger.warning(f"토큰 파일 저장 실패: {e}")
+            data = {
+                "access_token": self.access_token,
+                "token_expired_at": self.token_expired_at.isoformat() if self.token_expired_at else ""
+            }
+            atomic_save_json(self.token_file, data)
 
     def is_token_valid(self) -> bool:
         if not self.access_token or not self.token_expired_at:
             return False
-        # 만료 10분 전이면 재발급
         return now() < (self.token_expired_at - datetime.timedelta(minutes=10))
 
     def get_access_token(self) -> bool:
@@ -148,8 +171,8 @@ class KISApiClient:
 
             try:
                 self._rate_limit()
-                # 짧은 타임아웃으로 네트워크 장애 시 빠르게 실패 처리
-                res = requests.post(url, headers=headers, json=body, timeout=(3, 5))
+                session = self.get_session()
+                res = session.post(url, headers=headers, json=body, timeout=(3, 5))
                 if res.status_code == 200:
                     data = res.json()
                     self.access_token = data.get("access_token")
@@ -202,7 +225,8 @@ class KISApiClient:
         }
         try:
             self._rate_limit()
-            res = requests.post(url, headers=headers, json=body, timeout=(3, 5))
+            session = self.get_session()
+            res = session.post(url, headers=headers, json=body, timeout=(3, 5))
             if res.status_code == 200:
                 return res.json().get("HASH")
         except Exception as e:
@@ -370,7 +394,7 @@ class KISApiClient:
             return {"rt_cd": "-1", "msg1": "주문 수량은 1주 이상이어야 합니다."}
 
         url = f"{self.url_base}/uapi/domestic-stock/v1/trading/order-cash"
-        if buy_sell.upper() == "BUY":
+        if buy_sell.upper() in ("BUY", "매수"):
             tr_id = "VTTC0802U" if self.is_mock else "TTTC0802U"
         else:
             tr_id = "VTTC0801U" if self.is_mock else "TTTC0801U"
@@ -381,7 +405,7 @@ class KISApiClient:
             "PDNO": stock_code,
             "ORD_DVSN": ord_dv,
             "ORD_QTY": str(qty),
-            "ORD_UNPR": str(price) if ord_dv != "01" and price > 0 else "0"
+            "ORD_UNPR": str(price) if ord_dv not in ("01", "00") and price > 0 else "0" if ord_dv == "01" else str(price)
         }
 
         try:
@@ -399,13 +423,26 @@ class KISApiClient:
             self.logger.error(f"주문 전송 실패: {e}")
             return {"rt_cd": "-1", "msg1": str(e)}
 
-    def get_order_history(self, start_date: Optional[str] = None, end_date: Optional[str] = None) -> List[Dict[str, Any]]:
-        """주문 및 체결 내역 조회 (TTTC8001R / VTTC8001R)
+    def order_stock(
+        self,
+        code: str,
+        qty: int,
+        buy_sell: str = "매수",
+        order_type: str = "01",
+        price: int = 0
+    ) -> Dict[str, Any]:
+        """order_cash의 친화적 래퍼 메서드"""
+        action = "BUY" if buy_sell in ("매수", "BUY") else "SELL"
+        return self.order_cash(
+            stock_code=code,
+            qty=qty,
+            price=price,
+            buy_sell=action,
+            ord_dv=order_type
+        )
 
-        Args:
-            start_date: 조회 시작일 (YYYYMMDD). 기본값: 오늘
-            end_date: 조회 종료일 (YYYYMMDD). 기본값: 오늘
-        """
+    def get_order_history(self, start_date: Optional[str] = None, end_date: Optional[str] = None) -> List[Dict[str, Any]]:
+        """주문 및 체결 내역 조회 (TTTC8001R / VTTC8001R)"""
         url = f"{self.url_base}/uapi/domestic-stock/v1/trading/inquire-daily-ccld"
         tr_id = "VTTC8001R" if self.is_mock else "TTTC8001R"
         headers = self._get_headers(tr_id)
@@ -452,23 +489,7 @@ class KISApiClient:
             return []
 
     def get_trade_history_with_profit(self, start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, Any]:
-        """매수/매도 이력 조회 및 실현 손익 계산
-
-        Args:
-            start_date: 조회 시작일 (YYYYMMDD). 기본값: 오늘
-            end_date: 조회 종료일 (YYYYMMDD). 기본값: 오늘
-
-        Returns:
-            {
-                "orders": [...],           # 전체 주문/체결 내역
-                "realized_profit": float,  # 실현 손익 (매도 - 매수)
-                "buy_total": float,        # 총 매수 금액
-                "sell_total": float,       # 총 매도 금액
-                "buy_count": int,          # 매수 건수
-                "sell_count": int,         # 매도 건수
-                "profit_by_stock": {...}   # 종목별 실현 손익
-            }
-        """
+        """매수/매도 이력 조회 및 실현 손익 계산 (FIFO 선입선출 매칭)"""
         orders = self.get_order_history(start_date, end_date)
         if not orders:
             return {
@@ -481,8 +502,6 @@ class KISApiClient:
                 "profit_by_stock": {}
             }
 
-        # FIFO(선입선출) 정확성을 위해 주문을 시간순(오름차순)으로 정렬
-        # API가 반환하는 주문 순서는 보장되지 않으므로 반드시 정렬 필요
         orders.sort(key=lambda o: (
             o.get("order_date", "") or "",
             o.get("order_time", "") or ""
@@ -492,11 +511,7 @@ class KISApiClient:
         sell_total = 0.0
         buy_count = 0
         sell_count = 0
-        profit_by_stock = {}
-
-        # 종목별 매수/매도 주문을 시간순으로 수집
-        # FIFO(선입선출) 방식으로 매도 주문을 매수 주문과 매칭하여 실현 손익 계산
-        stock_orders = {}  # code -> list of (buy_sell, qty, price)
+        stock_orders = {}
 
         for o in orders:
             code = o["code"]
@@ -508,7 +523,6 @@ class KISApiClient:
                 "price": o.get("ccld_price", 0)
             })
 
-            # 체결된 수량과 가격 기준으로 금액 계산
             ccld_qty = o.get("ccld_qty", 0)
             ccld_price = o.get("ccld_price", 0)
             amount = ccld_qty * ccld_price
@@ -520,32 +534,28 @@ class KISApiClient:
                 sell_total += amount
                 sell_count += 1
 
-        # 종목별 실현 손익 집계 (FIFO 매칭)
         realized_profit = 0.0
         realized_buy_total = 0.0
         realized_sell_total = 0.0
         profit_by_stock = {}
 
         for code, stock_orders_list in stock_orders.items():
-            # 종목 정보 (이름)
             stock_name = ""
             for o in orders:
                 if o["code"] == code:
                     stock_name = o["name"]
                     break
 
-            buy_queue = []  # 아직 매도되지 않은 매수 주문 큐 (FIFO)
+            buy_queue = []
             sell_amount = 0.0
             sell_qty = 0
-            buy_amount_matched = 0.0  # 매도된 수량에 대응하는 매수 금액
+            buy_amount_matched = 0.0
             buy_qty_matched = 0
 
             for so in stock_orders_list:
                 if so["buy_sell"] == "매수":
-                    # 매수 주문은 큐에 추가 (아직 매도되지 않은 포지션)
                     buy_queue.append(so)
                 else:
-                    # 매도 주문: FIFO로 매수 주문과 매칭
                     sell_qty_remaining = so["qty"]
                     sell_amount += so["qty"] * so["price"]
                     sell_qty += so["qty"]
@@ -560,7 +570,6 @@ class KISApiClient:
                         if buy_order["qty"] <= 0:
                             buy_queue.pop(0)
 
-            # 매도가 있는 종목만 실현 손익에 포함
             if sell_qty > 0:
                 profit = sell_amount - buy_amount_matched
                 profit_by_stock[code] = {
@@ -575,7 +584,6 @@ class KISApiClient:
                 realized_buy_total += buy_amount_matched
                 realized_sell_total += sell_amount
             else:
-                # 매도가 없는 종목은 실현 손익에서 제외
                 profit_by_stock[code] = {
                     "name": stock_name,
                     "buy_amount": 0.0,
@@ -596,14 +604,7 @@ class KISApiClient:
         }
 
     def get_unrealized_profit(self) -> Dict[str, Any]:
-        """현재 보유 종목의 미실현 손익(평가손익) 계산
-
-        Returns:
-            {
-                "unrealized_profit": float,   # 총 미실현 손익
-                "unrealized_by_stock": {...}  # 종목별 미실현 손익
-            }
-        """
+        """현재 보유 종목의 미실현 손익(평가손익) 계산"""
         balance = self.get_account_balance()
         holdings = balance.get("holdings", [])
         unrealized_profit = 0.0

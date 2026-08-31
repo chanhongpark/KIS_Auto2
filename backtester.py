@@ -1,7 +1,7 @@
 """
 Backtesting Engine for KIS Auto Trading Strategy
 FinanceDataReader 기반 과거 데이터 시뮬레이션
-StockScreener(screener.py)의 매수/매도 평가 함수(evaluate_buy_signals_from_df, evaluate_sell_signals_from_df)를 100% 동일하게 직접 호출하여 실행합니다.
+core.indicators 및 core.strategy 모듈의 공통 알고리즘을 100% 동일하게 직접 호출하여 실행합니다.
 """
 import os
 import logging
@@ -11,8 +11,13 @@ import pandas as pd
 import numpy as np
 import FinanceDataReader as fdr
 
-from screener import StockScreener
 import config
+from screener import StockScreener, COOLDOWN_FILE
+from core.indicators import calculate_technical_indicators
+from core.strategy import (
+    evaluate_buy_signals_from_df as core_evaluate_buy_signals_from_df,
+    evaluate_sell_signals_from_df as core_evaluate_sell_signals_from_df
+)
 
 logger = logging.getLogger("Backtester")
 
@@ -52,6 +57,8 @@ class Backtester:
         os.makedirs(CACHE_DIR, exist_ok=True)
 
         total = len(self.universe)
+        atr_period = int(config.CURRENT_SETTINGS.get("atr_period", 14))
+
         for idx, item in enumerate(self.universe):
             code = item.get("code")
             name = item.get("name", code)
@@ -98,7 +105,7 @@ class Backtester:
 
             if df is not None and not df.empty and len(df) >= 60:
                 # 전체 일봉 DataFrame에 대해 보조지표를 1회 사전 계산 (시뮬레이션 루프 속도 100배 가속)
-                df_tech = self.screener.calculate_technical_indicators(df.to_dict("records"), is_intraday=False)
+                df_tech = calculate_technical_indicators(df, is_intraday=False, atr_period=atr_period)
                 data_map[code] = {
                     "name": name,
                     "df": df_tech if df_tech is not None else df
@@ -110,15 +117,12 @@ class Backtester:
         return data_map
 
     def run(self, progress_callback=None) -> Dict[str, Any]:
-        """screener.py의 공통 알고리즘 함수를 사용하여 백테스팅 실행"""
+        """screener.py 및 core.strategy의 공통 알고리즘을 사용하여 백테스팅 실행"""
         logger.info(f"=== [Backtester] 백테스트 시작: {self.start_date} ~ {self.end_date} ===")
 
-        # 백테스트 시작 시 쿨다운 임시 파일 초기화 (이전 실행 잔여 데이터 제거)
-        import os as _os
-        from screener import COOLDOWN_FILE as _cooldown_file
-        if _os.path.exists(_cooldown_file):
+        if os.path.exists(COOLDOWN_FILE):
             try:
-                _os.remove(_cooldown_file)
+                os.remove(COOLDOWN_FILE)
                 logger.info("백테스트 쿨다운 임시 파일 초기화 완료")
             except Exception as e:
                 logger.warning(f"백테스트 쿨다운 파일 초기화 실패: {e}")
@@ -139,16 +143,16 @@ class Backtester:
             return {"error": "지정된 기간 내 거래일 데이터가 존재하지 않습니다."}
 
         cash = self.initial_capital
-        holdings = {}  # code -> {qty, avg_buy_price, buy_date, holding_days, name}
+        holdings = {}
         trade_history = []
         daily_equity = []
-        cooldown_map = {}  # code -> 손절 청산일 (백테스트 내부 쿨다운 추적)
+        cooldown_map = {}
 
         total_days = len(trading_dates)
 
         for day_idx, current_date in enumerate(trading_dates):
             # -------------------------------------------------------------
-            # 1. 보유 종목 매도 & 리스크 관리 (screener.py 동일 로직 호출)
+            # 1. 보유 종목 매도 & 리스크 관리
             # -------------------------------------------------------------
             to_remove = []
             for code, pos in list(holdings.items()):
@@ -168,7 +172,6 @@ class Backtester:
                 low_price = float(current_row["low"])
                 avg_price = pos["avg_buy_price"]
 
-                # 당일 최고/최저/종가 수익률 산출
                 low_profit_rate = (low_price - avg_price) / avg_price * 100
                 high_profit_rate = (high_price - avg_price) / avg_price * 100
                 close_profit_rate = (close_price - avg_price) / avg_price * 100
@@ -183,11 +186,9 @@ class Backtester:
                     "profit_loss": (close_price - avg_price) * pos["qty"]
                 }
 
-                # 매수 후 최고가 갱신
                 pos["highest_price"] = max(pos.get("highest_price", avg_price), high_price)
                 is_partial_sold = pos.get("is_partial_sold", False)
 
-                # 장중 저가/고가 기준 긴급 손절 / 목표 익절 우선 감지
                 sell_signal = None
                 sell_price = close_price
 
@@ -201,7 +202,7 @@ class Backtester:
                         stop_loss_rate=self.stop_loss_rate,
                         target_profit_rate=self.target_profit_rate,
                         current_date=current_date,
-                        use_file_cooldown=True,  # 백테스팅: 파일 기반 쿨다운
+                        use_file_cooldown=True,
                         is_partial_sold=is_partial_sold,
                         highest_price=pos["highest_price"],
                         holding_days=pos["holding_days"]
@@ -218,7 +219,7 @@ class Backtester:
                         stop_loss_rate=self.stop_loss_rate,
                         target_profit_rate=self.target_profit_rate,
                         current_date=current_date,
-                        use_file_cooldown=True,  # 백테스팅: 파일 기반 쿨다운
+                        use_file_cooldown=True,
                         is_partial_sold=False,
                         highest_price=pos["highest_price"],
                         holding_days=pos["holding_days"]
@@ -236,14 +237,13 @@ class Backtester:
                         stop_loss_rate=self.stop_loss_rate,
                         target_profit_rate=self.target_profit_rate,
                         current_date=current_date,
-                        use_file_cooldown=True,  # 백테스팅: 파일 기반 쿨다운
+                        use_file_cooldown=True,
                         is_partial_sold=is_partial_sold,
                         highest_price=pos["highest_price"],
                         holding_days=pos["holding_days"]
                     )
                     sell_price = close_price
 
-                # 매도 신호 발생 시 주문 정산
                 if sell_signal:
                     sell_qty = sell_signal.get("sell_qty", pos["qty"])
                     sell_type = sell_signal.get("sell_type", "매도")
@@ -272,11 +272,9 @@ class Backtester:
                         "reason": sell_reason
                     })
 
-                    # 1차 익절 완료 처리
                     if sell_signal.get("is_partial_take", False) or "1차익절" in sell_type or "분할익절" in sell_type:
                         pos["is_partial_sold"] = True
 
-                    # 손절 청산 시 쿨다운 등록 (백테스트 내부 추적)
                     if "손절" in sell_type and pos["qty"] <= sell_qty:
                         cooldown_map[code] = current_date
 
@@ -289,14 +287,13 @@ class Backtester:
                     del holdings[code]
 
             # -------------------------------------------------------------
-            # 2. 15:15 종가 매수 스크리닝 (screener.py 동일 로직 호출)
+            # 2. 15:15 종가 매수 스크리닝
             # -------------------------------------------------------------
             available_slots = self.max_holdings - len(holdings)
             if available_slots > 0 and cash >= self.budget_per_stock:
                 held_codes = set(holdings.keys())
                 buy_candidates = []
 
-                # 시장 국면 필터: 첫 번째 종목의 20일선 대비 위치로 시장 국면 근사 판단
                 market_regime = None
                 if config.CURRENT_SETTINGS.get("market_regime_filter_enabled", True):
                     first_code = next(iter(universe_data))
@@ -319,7 +316,6 @@ class Backtester:
                     if len(sub_df) < 25:
                         continue
 
-                    # 손절 쿨다운 기간 내 종목 재매수 차단
                     if config.CURRENT_SETTINGS.get("cooldown_enabled", True) and code in cooldown_map:
                         cooldown_days = int(config.CURRENT_SETTINGS.get("cooldown_days", 4))
                         try:
@@ -333,7 +329,6 @@ class Backtester:
 
                     df_tech = sub_df.tail(65)
 
-                    # screener.py의 공통 evaluate_buy_signals_from_df 직접 호출!
                     buy_eval = self.screener.evaluate_buy_signals_from_df(
                         df=df_tech,
                         code=code,
@@ -342,13 +337,12 @@ class Backtester:
                         budget=self.budget_per_stock,
                         market_regime=market_regime,
                         current_date=current_date,
-                        use_file_cooldown=True  # 백테스팅: 파일 기반 쿨다운
+                        use_file_cooldown=True
                     )
 
                     if buy_eval:
                         buy_candidates.append(buy_eval)
 
-                # 점수 높은 순으로 정렬 후 1일 최대 신규 매수 제한(max_daily_buy) 적용
                 buy_candidates.sort(key=lambda x: x["score"], reverse=True)
                 max_daily_buy = int(config.CURRENT_SETTINGS.get("max_daily_buy_count", 2))
                 for cand in buy_candidates[:min(available_slots, max_daily_buy)]:
@@ -462,12 +456,9 @@ class Backtester:
         except Exception as e:
             logger.warning(f"KOSPI 벤치마크 데이터 로드 실패: {e}")
 
-        # 백테스트 종료 시 쿨다운 임시 파일 정리 (다음 실행에 영향 없도록)
-        import os as _os2
-        from screener import COOLDOWN_FILE as _cooldown_file2
-        if _os2.path.exists(_cooldown_file2):
+        if os.path.exists(COOLDOWN_FILE):
             try:
-                _os2.remove(_cooldown_file2)
+                os.remove(COOLDOWN_FILE)
                 logger.info("백테스트 쿨다운 임시 파일 정리 완료")
             except Exception as e:
                 logger.warning(f"백테스트 쿨다운 파일 정리 실패: {e}")

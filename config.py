@@ -1,10 +1,14 @@
 """
 KIS Auto Trading - Configuration Module
 환경 변수, API 인증 정보 및 전략/스크리닝 설정 관리
+Atomic JSON 저장 및 스레드 안전 설정 로드 지원
 """
 import os
 import json
 import logging
+import threading
+from typing import Any, Dict, Optional
+from core.storage import safe_load_json, atomic_save_json
 
 # 로깅 기본 설정 (KST 기준)
 class KSTFormatter(logging.Formatter):
@@ -21,7 +25,6 @@ logging.basicConfig(
     format='%(asctime)s [%(levelname)s] (%(name)s) %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
-# 루트 로거에 KST Formatter 적용
 for handler in logging.getLogger().handlers:
     handler.setFormatter(KSTFormatter(fmt='%(asctime)s [%(levelname)s] (%(name)s) %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
 logger = logging.getLogger("Config")
@@ -61,7 +64,7 @@ URL_BASE_REAL = "https://openapi.koreainvestment.com:9443"
 SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "settings.json")
 
 # 기본 전략 및 시스템 파라미터
-DEFAULT_SETTINGS = {
+DEFAULT_SETTINGS: Dict[str, Any] = {
     "mock_trading": True,                    # 모의투자 여부 (True: 모의, False: 실전)
     "target_profit_rate": 0.05,             # 목표 익절 수익률 (+5%)
     "stop_loss_rate": -0.03,                # 손절 수익률 (-3%)
@@ -222,35 +225,33 @@ DEFAULT_SETTINGS = {
     ]
 }
 
-def load_settings() -> dict:
-    """settings.json에서 설정을 로드하거나 없으면 기본값 생성"""
-    if os.path.exists(SETTINGS_FILE):
-        try:
-            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
-                saved = json.load(f)
-                res = DEFAULT_SETTINGS.copy()
-                res.update(saved)
-                return res
-        except Exception as e:
-            logger.warning(f"설정 파일({SETTINGS_FILE}) 로드 실패: {e}")
-    # 기본값 파일 저장
-    save_settings(DEFAULT_SETTINGS)
-    return DEFAULT_SETTINGS.copy()
+_config_lock = threading.Lock()
 
-def save_settings(new_settings: dict) -> bool:
+def load_settings() -> Dict[str, Any]:
+    """settings.json에서 설정을 로드하거나 없으면 기본값 생성"""
+    with _config_lock:
+        saved = safe_load_json(SETTINGS_FILE, default=None)
+        if saved is not None and isinstance(saved, dict):
+            res = DEFAULT_SETTINGS.copy()
+            res.update(saved)
+            return res
+        # 기본값 파일 저장
+        atomic_save_json(SETTINGS_FILE, DEFAULT_SETTINGS)
+        return DEFAULT_SETTINGS.copy()
+
+def save_settings(new_settings: Dict[str, Any]) -> bool:
     """settings.json 파일에 설정 저장"""
-    try:
-        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-            json.dump(new_settings, f, ensure_ascii=False, indent=2)
-        return True
-    except Exception as e:
-        logger.error(f"설정 저장 실패: {e}")
-        return False
+    with _config_lock:
+        ok = atomic_save_json(SETTINGS_FILE, new_settings)
+        if ok:
+            CURRENT_SETTINGS.clear()
+            CURRENT_SETTINGS.update(new_settings)
+        return ok
 
 # 현재 활성화된 런타임 설정
-CURRENT_SETTINGS = load_settings()
+CURRENT_SETTINGS: Dict[str, Any] = load_settings()
 
-def get_setting(key: str, default=None):
+def get_setting(key: str, default: Any = None) -> Any:
     return CURRENT_SETTINGS.get(key, default)
 
 def get_url_base() -> str:
