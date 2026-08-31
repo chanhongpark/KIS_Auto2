@@ -27,7 +27,7 @@ class KISApiClient:
         self.access_token: Optional[str] = None
         self.token_expired_at: Optional[datetime.datetime] = None
         self._last_call_time = 0.0
-        self._token_lock = threading.Lock()
+        self._token_lock = threading.RLock()
 
         # 토큰 파일 로드
         self._load_token_file()
@@ -66,10 +66,13 @@ class KISApiClient:
         for attempt in range(1, max_retries + 1):
             self._rate_limit()
             try:
+                # 연결 타임아웃과 읽기 타임아웃을 분리하여 네트워크 장애 시 빠르게 실패
+                conn_timeout = min(timeout, 3.0)
+                read_timeout = timeout
                 if method.upper() == "GET":
-                    resp = requests.get(url, headers=headers, params=params, timeout=timeout)
+                    resp = requests.get(url, headers=headers, params=params, timeout=(conn_timeout, read_timeout))
                 else:
-                    resp = requests.post(url, headers=headers, json=json_data, timeout=timeout)
+                    resp = requests.post(url, headers=headers, json=json_data, timeout=(conn_timeout, read_timeout))
 
                 # 정상 응답이면 즉시 반환
                 if resp.status_code == 200:
@@ -145,7 +148,8 @@ class KISApiClient:
 
             try:
                 self._rate_limit()
-                res = requests.post(url, headers=headers, json=body, timeout=10)
+                # 짧은 타임아웃으로 네트워크 장애 시 빠르게 실패 처리
+                res = requests.post(url, headers=headers, json=body, timeout=(3, 5))
                 if res.status_code == 200:
                     data = res.json()
                     self.access_token = data.get("access_token")
@@ -157,6 +161,15 @@ class KISApiClient:
                 else:
                     self.logger.error(f"토큰 발급 실패 ({res.status_code}): {res.text}")
                     return False
+            except requests.exceptions.ConnectTimeout:
+                self.logger.error(f"토큰 발급 연결 타임아웃: {url} (네트워크 연결 불가)")
+                return False
+            except requests.exceptions.ReadTimeout:
+                self.logger.error(f"토큰 발급 응답 타임아웃: {url} (API 서버 응답 없음)")
+                return False
+            except requests.exceptions.ConnectionError as e:
+                self.logger.error(f"토큰 발급 연결 실패: {url} - {e}")
+                return False
             except Exception as e:
                 self.logger.error(f"토큰 발급 요청 예외: {e}")
                 return False
@@ -189,7 +202,7 @@ class KISApiClient:
         }
         try:
             self._rate_limit()
-            res = requests.post(url, headers=headers, json=body, timeout=5)
+            res = requests.post(url, headers=headers, json=body, timeout=(3, 5))
             if res.status_code == 200:
                 return res.json().get("HASH")
         except Exception as e:

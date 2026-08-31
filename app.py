@@ -168,9 +168,15 @@ if "nav_page" not in st.session_state:
 # 1회 스케줄러 시작 (세션 상태 보존)
 @st.cache_resource
 def init_system():
+    print("Running init_system().")
     scheduler = start_scheduler()
+    print("Scheduler started.")
     api = KISApiClient()
-    api.get_access_token()
+    print("KISApiClient created.")
+    token_ok = api.get_access_token()
+    print(f"Access token obtained: {token_ok}")
+    if not token_ok:
+        st.warning("⚠️ KIS API 토큰 발급에 실패했습니다. 네트워크 연결 및 API 설정을 확인하세요.")
     return scheduler, api
 
 scheduler, api = init_system()
