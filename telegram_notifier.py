@@ -6,6 +6,7 @@ import os
 import logging
 import threading
 import requests
+from html import escape as html_escape
 from typing import Optional, Dict, Any, List
 
 import config
@@ -101,14 +102,14 @@ class TelegramNotifier:
         text = (
             "🟢 <b>종가 매수 주문 성공</b>\n"
             "━━━━━━━━━━━━━━━━━━\n"
-            f"📌 <b>종목:</b> {name} ({code})\n"
+            f"📌 <b>종목:</b> {html_escape(name)} ({html_escape(code)})\n"
             f"🔢 <b>수량:</b> {qty:,}주\n"
             f"💰 <b>주문가:</b> {price:,.0f}원\n"
             f"💵 <b>총 주문액:</b> {total_amount:,.0f}원\n"
-            f"📋 <b>주문 유형:</b> {order_type}\n"
+            f"📋 <b>주문 유형:</b> {html_escape(order_type)}\n"
         )
         if order_no:
-            text += f"🆔 <b>주문 번호:</b> {order_no}\n"
+            text += f"🆔 <b>주문 번호:</b> {html_escape(order_no)}\n"
         text += "━━━━━━━━━━━━━━━━━━\n"
         text += f"⏰ {self._now_str()}"
 
@@ -172,8 +173,8 @@ class TelegramNotifier:
         text = (
             f"{icon} <b>{title}</b>\n"
             "━━━━━━━━━━━━━━━━━━\n"
-            f"📌 <b>종목:</b> {name} ({code})\n"
-            f"📋 <b>유형:</b> {sell_type}\n"
+            f"📌 <b>종목:</b> {html_escape(name)} ({html_escape(code)})\n"
+            f"📋 <b>유형:</b> {html_escape(sell_type)}\n"
             f"📦 <b>보유 수량:</b> {holding_qty:,}주\n"
             f"💹 <b>평균 매입가:</b> {avg_buy_price:,.0f}원\n"
             f"📊 <b>현재가:</b> {current_price:,.0f}원\n"
@@ -183,7 +184,7 @@ class TelegramNotifier:
             "📝 <b>매도 사유:</b>\n"
         )
         for reason in reasons:
-            text += f"• {reason}\n"
+            text += f"• {html_escape(reason)}\n"
         text += "━━━━━━━━━━━━━━━━━━\n"
         text += f"⏰ {self._now_str()}"
 
@@ -207,14 +208,14 @@ class TelegramNotifier:
         text = (
             "🔴 <b>매도 주문 성공</b>\n"
             "━━━━━━━━━━━━━━━━━━\n"
-            f"📌 <b>종목:</b> {name} ({code})\n"
+            f"📌 <b>종목:</b> {html_escape(name)} ({html_escape(code)})\n"
             f"🔢 <b>수량:</b> {qty:,}주\n"
             f"💰 <b>주문가:</b> {price:,.0f}원\n"
             f"💵 <b>총 매도액:</b> {total_amount:,.0f}원\n"
-            f"📋 <b>주문 유형:</b> {order_type}\n"
+            f"📋 <b>주문 유형:</b> {html_escape(order_type)}\n"
         )
         if order_no:
-            text += f"🆔 <b>주문 번호:</b> {order_no}\n"
+            text += f"🆔 <b>주문 번호:</b> {html_escape(order_no)}\n"
         text += "━━━━━━━━━━━━━━━━━━\n"
         text += f"⏰ {self._now_str()}"
 
@@ -246,7 +247,7 @@ class TelegramNotifier:
                 s_score = item.get("supply_score", 0)
                 m_score = item.get("momentum_score", 0)
                 text += (
-                    f"• {buy_tag} <b>{item.get('name', '')}</b> ({item.get('code', '')})\n"
+                    f"• {buy_tag} <b>{html_escape(item.get('name', ''))}</b> ({html_escape(item.get('code', ''))})\n"
                     f"  💰 {item.get('current_price', 0):,.0f}원 | 🎯 총 {score}점 (추세 {t_score}/수급 {s_score}/모멘텀 {m_score})\n"
                 )
 
@@ -256,8 +257,8 @@ class TelegramNotifier:
                 urgent_tag = "🚨 [긴급]" if item.get("is_urgent") else "⚠️"
                 sell_type = item.get("sell_type", "매도")
                 text += (
-                    f"• {urgent_tag} <b>{item.get('name', '')}</b> ({item.get('code', '')}) "
-                    f"| {sell_type} | 수익률 {item.get('profit_rate', 0):+.2f}%\n"
+                    f"• {urgent_tag} <b>{html_escape(item.get('name', ''))}</b> ({html_escape(item.get('code', ''))}) "
+                    f"| {html_escape(sell_type)} | 수익률 {item.get('profit_rate', 0):+.2f}%\n"
                 )
 
         text += "━━━━━━━━━━━━━━━━━━\n"
