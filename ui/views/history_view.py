@@ -29,7 +29,7 @@ def render_history(api):
     with col_date3:
         st.write("")
         st.write("")
-        if st.button("🔍 조회", key="btn_history_search", type="primary", use_container_width=True):
+        if st.button("🔍 조회", key="btn_history_search", type="primary", width="stretch"):
             st.rerun()
 
     if start_date > end_date:
@@ -118,7 +118,7 @@ def render_history(api):
                 yaxis_title="평가손익 (원)",
                 margin=dict(l=20, r=20, t=50, b=20)
             )
-            st.plotly_chart(fig_unreal, use_container_width=True)
+            st.plotly_chart(fig_unreal, width="stretch")
         else:
             st.info("현재 보유 중인 종목이 없습니다.")
 
@@ -158,7 +158,7 @@ def render_history(api):
                 yaxis_title="실현 손익 (원)",
                 margin=dict(l=20, r=20, t=50, b=20)
             )
-            st.plotly_chart(fig_profit, use_container_width=True)
+            st.plotly_chart(fig_profit, width="stretch")
         else:
             st.info("선택 기간 내 매도 완료된 종목이 없습니다.")
 
@@ -192,4 +192,4 @@ def render_history(api):
                     template="plotly_dark",
                     height=350
                 )
-                st.plotly_chart(fig_pie, use_container_width=True)
+                st.plotly_chart(fig_pie, width="stretch")

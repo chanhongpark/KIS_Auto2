@@ -120,7 +120,7 @@ def render_backtest():
             bt_universe = [{"code": c.strip(), "name": c.strip()} for c in custom_codes_raw.split(",") if c.strip()]
 
         st.caption(f"선택된 유니버스 종목 수: **{len(bt_universe)}개** • 운영 모드: **{preset_options[bt_mode]}**")
-        btn_run_bt = st.button("🚀 백테스팅 실행", type="primary", use_container_width=True)
+        btn_run_bt = st.button("🚀 백테스팅 실행", type="primary", width="stretch")
 
     if btn_run_bt:
         if bt_start >= bt_end:
@@ -232,7 +232,7 @@ def render_backtest():
                     hovermode="x unified",
                     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
 
             # -------------------------------------------------------------
             # [매매 내역 테이블]

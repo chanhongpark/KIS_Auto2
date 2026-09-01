@@ -237,7 +237,7 @@ def render_interactive_stock_chart(api_client, screener_engine, code: str, name:
                 margin=dict(l=20, r=20, t=40, b=20),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
             latest = df_tech.iloc[-1]
             m1, m2, m3, m4, m5 = st.columns(5)

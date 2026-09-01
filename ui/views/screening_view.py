@@ -15,7 +15,7 @@ def render_screener(api, screener, proposals, holding_codes):
         st.caption(f"스크리닝 기준 시각: **{proposals.get('generated_at', '-')}** | 거래량 1.04배 보정치 & 캡 점수 적용 (45점 이상)")
     with col_t2:
         st.write("")
-        if st.button("🔄 즉시 종가 스크리닝 실행", key="btn_run_screener_page", type="primary", use_container_width=True):
+        if st.button("🔄 즉시 종가 스크리닝 실행", key="btn_run_screener_page", type="primary", width="stretch"):
             with st.spinner("유니버스 종목 분석 및 종가 매수 스크리닝 중..."):
                 screener.run_closing_price_screening()
                 st.success("✅ 종가 스크리닝 완료!")
@@ -96,7 +96,7 @@ def render_screener(api, screener, proposals, holding_codes):
                     st.write("")
                     st.write("")
                     btn_label = f"⚡ 매수 ({ord_type})"
-                    if st.button(btn_label, key=f"btn_buy_{item['code']}_{idx}", type="primary", use_container_width=True):
+                    if st.button(btn_label, key=f"btn_buy_{item['code']}_{idx}", type="primary", width="stretch"):
                         if ord_type == "지정가":
                             ord_dv = "00"
                             order_prc = int(target_price)

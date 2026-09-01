@@ -108,7 +108,7 @@ def render_risk_tab(api, screener, holdings, proposals, realtime_detection_fragm
             key="realtime_detect_toggle"
         )
     with col_btn2:
-        if st.button("⚡ 즉시 체크", key="btn_immediate_check", use_container_width=True):
+        if st.button("⚡ 즉시 체크", key="btn_immediate_check", width="stretch"):
             with st.spinner("보유 주식 매도 신호 즉시 분석 중..."):
                 updated = screener.check_sell_signals_now()
                 st.session_state["last_check_time"] = now_str()
@@ -181,7 +181,7 @@ def render_risk_tab(api, screener, holdings, proposals, realtime_detection_fragm
                     st.write("")
                     st.write("")
                     btn_text = "🚨 긴급 매도" if is_urgent else f"⚡ 매도 ({sell_ord_type})"
-                    if st.button(btn_text, key=f"btn_sell_{s_item['code']}_{s_idx}", type="primary", use_container_width=True):
+                    if st.button(btn_text, key=f"btn_sell_{s_item['code']}_{s_idx}", type="primary", width="stretch"):
                         is_sell_limit = (sell_ord_type == "지정가")
                         sell_ord_dv = "00" if is_sell_limit else "01"
                         sell_prc_val = int(sell_target_price) if is_sell_limit else 0
@@ -255,7 +255,7 @@ def render_performance_tab(api):
     with col_date3:
         st.write("")
         st.write("")
-        if st.button("🔍 조회", key="btn_perf_search", type="primary", use_container_width=True):
+        if st.button("🔍 조회", key="btn_perf_search", type="primary", width="stretch"):
             st.rerun()
 
     if start_date > end_date:
@@ -343,7 +343,7 @@ def render_performance_tab(api):
                 yaxis_title="실현 손익 (원)",
                 margin=dict(l=20, r=20, t=40, b=20)
             )
-            st.plotly_chart(fig_profit, use_container_width=True)
+            st.plotly_chart(fig_profit, width="stretch")
         else:
             st.info("선택 기간 내 매도 완료된 종목이 없습니다.")
 

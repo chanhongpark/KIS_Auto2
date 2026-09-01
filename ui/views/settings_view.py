@@ -174,7 +174,7 @@ def render_settings():
             f_rsi_overbought_sell = st.toggle("RSI 75 초과 시 전량 매도 (체크 해제 시 50% 분할 매도)", value=display_settings.get("rsi_overbought_sell", False))
         st.caption("1차 익절 달성 시 설정한 비율만큼 먼저 차익을 실현하고, 잔여 수량은 20일선 또는 최고가 대비 설정 비율 하락 시까지 수익을 극대화합니다.")
 
-        save_btn = st.form_submit_button("💾 설정 저장하기 (Save Settings)", use_container_width=True)
+        save_btn = st.form_submit_button("💾 설정 저장하기 (Save Settings)", width="stretch")
         if save_btn:
             new_settings = {
                 "mock_trading": f_mock,
