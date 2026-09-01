@@ -101,7 +101,7 @@ def render_screener(api, screener, proposals, holding_codes):
                             ord_dv = "00"
                             order_prc = int(target_price)
                         elif ord_type == "LOC (종가조건부)":
-                            ord_dv = "51"
+                            ord_dv = "02"
                             order_prc = int(target_price)
                         else:
                             ord_dv = "01"

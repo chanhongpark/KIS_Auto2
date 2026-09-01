@@ -395,9 +395,9 @@ class KISApiClient:
 
         url = f"{self.url_base}/uapi/domestic-stock/v1/trading/order-cash"
         if buy_sell.upper() in ("BUY", "매수"):
-            tr_id = "VTTC0802U" if self.is_mock else "TTTC0802U"
+            tr_id = "VTTC0012U" if self.is_mock else "TTTC0012U"
         else:
-            tr_id = "VTTC0801U" if self.is_mock else "TTTC0801U"
+            tr_id = "VTTC0011U" if self.is_mock else "TTTC0011U"
 
         body = {
             "CANO": self.cano,
