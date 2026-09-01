@@ -490,7 +490,8 @@ class StockScreener:
                     profit_rate=float(sell_item.get("profit_rate", 0)),
                     profit_loss=float(sell_item.get("profit_loss", 0)),
                     reasons=sell_item.get("reasons", []),
-                    is_urgent=bool(sell_item.get("is_urgent", False))
+                    is_urgent=bool(sell_item.get("is_urgent", False)),
+                    sell_type=sell_item.get("sell_type", "매도")
                 )
             except Exception as e:
                 self.logger.warning(f"[{sell_item.get('name')}] 텔레그램 매도 알림 전송 실패: {e}")

@@ -4,16 +4,24 @@ Telegram Notification Module
 """
 import os
 import logging
+import threading
 import requests
 from typing import Optional, Dict, Any, List
 
 import config
+from core.storage import safe_load_json, atomic_save_json
+from time_utils import today
 
 logger = logging.getLogger("TelegramNotifier")
+
+# 매도 알림 중복 방지 기록 파일 (같은 날짜 + 같은 종목 + 같은 유형 중복 전송 방지)
+SELL_NOTIFY_HISTORY_FILE = os.path.join(os.path.dirname(__file__), "sell_notify_history.json")
 
 
 class TelegramNotifier:
     """텔레그램 봇을 통한 주문/신호 알림 전송 클래스"""
+
+    _history_lock = threading.Lock()
 
     def __init__(self, bot_token: Optional[str] = None, chat_id: Optional[str] = None):
         self.bot_token = bot_token or config.TELEGRAM_BOT_TOKEN
@@ -106,6 +114,40 @@ class TelegramNotifier:
 
         return self.send_message(text)
 
+    def _load_sell_notify_history(self) -> Dict[str, List[str]]:
+        """매도 알림 전송 이력 로드 (날짜 -> [code|sell_type] 목록)"""
+        return safe_load_json(SELL_NOTIFY_HISTORY_FILE, default={})
+
+    def _save_sell_notify_history(self, history: Dict[str, List[str]]) -> bool:
+        """매도 알림 전송 이력 저장"""
+        return atomic_save_json(SELL_NOTIFY_HISTORY_FILE, history)
+
+    def _is_sell_notified(self, code: str, sell_type: str) -> bool:
+        """
+        같은 날짜 + 같은 종목 + 같은 유형의 매도 알림이 이미 전송되었는지 확인
+        """
+        date_str = today().strftime("%Y-%m-%d")
+        key = f"{code}|{sell_type}"
+        with self._history_lock:
+            history = self._load_sell_notify_history()
+            sent_keys = history.get(date_str, [])
+            return key in sent_keys
+
+    def _mark_sell_notified(self, code: str, sell_type: str) -> bool:
+        """
+        매도 알림 전송 이력에 기록 (같은 날짜 + 같은 종목 + 같은 유형 중복 방지)
+        """
+        date_str = today().strftime("%Y-%m-%d")
+        key = f"{code}|{sell_type}"
+        with self._history_lock:
+            history = self._load_sell_notify_history()
+            sent_keys = history.get(date_str, [])
+            if key not in sent_keys:
+                sent_keys.append(key)
+                history[date_str] = sent_keys
+                return self._save_sell_notify_history(history)
+            return True
+
     def send_sell_recommendation(
         self,
         name: str,
@@ -116,15 +158,22 @@ class TelegramNotifier:
         profit_rate: float,
         profit_loss: float,
         reasons: List[str],
-        is_urgent: bool = False
+        is_urgent: bool = False,
+        sell_type: str = "매도"
     ) -> bool:
-        """매도 추천 알림 전송"""
+        """매도 추천 알림 전송 (같은 날짜 + 같은 종목 + 같은 유형 중복 전송 방지)"""
+        # 중복 전송 방지: 같은 날짜 + 같은 종목 + 같은 유형이 이미 전송된 경우 스킵
+        if self._is_sell_notified(code, sell_type):
+            logger.info(f"[{name}({code})] 같은 날짜/종목/유형({sell_type}) 매도 알림이 이미 전송되어 중복 전송을 건너뜁니다.")
+            return False
+
         icon = "🚨" if is_urgent else "⚠️"
         title = "긴급 손절 알림" if is_urgent else "매도 추천 신호"
         text = (
             f"{icon} <b>{title}</b>\n"
             "━━━━━━━━━━━━━━━━━━\n"
             f"📌 <b>종목:</b> {name} ({code})\n"
+            f"📋 <b>유형:</b> {sell_type}\n"
             f"📦 <b>보유 수량:</b> {holding_qty:,}주\n"
             f"💹 <b>평균 매입가:</b> {avg_buy_price:,.0f}원\n"
             f"📊 <b>현재가:</b> {current_price:,.0f}원\n"
@@ -138,7 +187,11 @@ class TelegramNotifier:
         text += "━━━━━━━━━━━━━━━━━━\n"
         text += f"⏰ {self._now_str()}"
 
-        return self.send_message(text)
+        sent = self.send_message(text)
+        if sent:
+            # 전송 성공 시 이력 기록 (다음 중복 전송 방지)
+            self._mark_sell_notified(code, sell_type)
+        return sent
 
     def send_sell_success(
         self,
