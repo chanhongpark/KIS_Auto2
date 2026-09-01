@@ -307,7 +307,14 @@ def save_settings(new_settings: Dict[str, Any]) -> bool:
         merged.update(new_settings)
         ok = atomic_save_json(SETTINGS_FILE, merged)
         if ok:
-            _cached_settings = merged
+            # 기존 CURRENT_SETTINGS dict를 in-place로 갱신하여,
+            # 코드베이스 전반에서 참조 중인 config.CURRENT_SETTINGS가
+            # 항상 최신 저장값을 반영하도록 한다.
+            # (기존에는 _cached_settings를 새 dict로 교체만 하여,
+            #  import 시점에 고정된 CURRENT_SETTINGS는 이전 값을 유지하는 버그가 있었음)
+            CURRENT_SETTINGS.clear()
+            CURRENT_SETTINGS.update(merged)
+            _cached_settings = CURRENT_SETTINGS
         return ok
 
 def get_effective_settings_for_regime(detected_regime: str, base_settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
