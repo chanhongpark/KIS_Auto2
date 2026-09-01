@@ -102,7 +102,7 @@ def render_history(api):
             u_df["현재가(원)"] = u_df["현재가(원)"].apply(lambda x: f"{x:,.0f}")
             u_df["평가손익(원)"] = u_df["평가손익(원)"].apply(lambda x: f"{x:+,.0f}")
             u_df["수익률(%)"] = u_df["수익률(%)"].apply(lambda x: f"{x:+.2f}%")
-            st.dataframe(u_df, use_container_width=True)
+            st.dataframe(u_df, width="stretch")
 
             fig_unreal = go.Figure(go.Bar(
                 x=[v["name"] for v in unrealized_by_stock.values()],
@@ -142,7 +142,7 @@ def render_history(api):
             pbs_df["매수금액(원)"] = pbs_df["매수금액(원)"].apply(lambda x: f"{x:,.0f}")
             pbs_df["매도금액(원)"] = pbs_df["매도금액(원)"].apply(lambda x: f"{x:,.0f}")
             pbs_df["실현손익(원)"] = pbs_df["실현손익(원)"].apply(lambda x: f"{x:+,.0f}")
-            st.dataframe(pbs_df, use_container_width=True)
+            st.dataframe(pbs_df, width="stretch")
 
             fig_profit = go.Figure(go.Bar(
                 x=[v["name"] for v in sold_stocks.values()],
@@ -176,7 +176,7 @@ def render_history(api):
             h_df["체결가"] = h_df["체결가"].apply(lambda x: f"{x:,.0f}")
             h_df["체결금액(원)"] = h_df["체결수량"] * h_df["체결가"].str.replace(",", "").astype(float)
             h_df["체결금액(원)"] = h_df["체결금액(원)"].apply(lambda x: f"{x:,.0f}")
-            st.dataframe(h_df, use_container_width=True)
+            st.dataframe(h_df, width="stretch")
 
             buy_count_total = len([o for o in orders if o["buy_sell"] == "매수"])
             sell_count_total = len([o for o in orders if o["buy_sell"] == "매도"])

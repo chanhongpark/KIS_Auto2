@@ -250,7 +250,7 @@ def render_backtest():
                             "sell_type": "유형", "price": "체결가", "qty": "수량", "amount": "거래금액",
                             "profit_pct": "수익률(%)", "profit_krw": "손익금(원)", "holding_days": "보유일수", "reasons": "사유"
                         }),
-                        use_container_width=True,
+                        width="stretch",
                         height=350
                     )
                 with tab_t2:
@@ -262,6 +262,6 @@ def render_backtest():
                             평균수익률_pct=("profit_pct", "mean"),
                             평균보유일수=("holding_days", "mean")
                         ).reset_index()
-                        st.dataframe(type_summary, use_container_width=True)
+                        st.dataframe(type_summary, width="stretch")
             else:
                 st.info("해당 기간 동안 발생한 매매 체결 내역이 없습니다.")

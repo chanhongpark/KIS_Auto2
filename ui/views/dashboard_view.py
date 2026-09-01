@@ -78,7 +78,7 @@ def render_overview_tab(api, screener, summary, holdings, proposals, holding_cod
         h_df["수익률(%)"] = h_df["수익률(%)"].apply(lambda x: f"{x:+.2f}%")
         h_df["평가손익(원)"] = h_df["평가손익(원)"].apply(lambda x: f"{x:+,.0f}")
         h_df["평가금액(원)"] = h_df["평가금액(원)"].apply(lambda x: f"{x:,.0f}")
-        st.dataframe(h_df, use_container_width=True)
+        st.dataframe(h_df, width="stretch")
 
         holding_options = [f"{h['name']} ({h['code']}) | 평단가: {h['avg_buy_price']:,.0f}원 | 수익률: {h['profit_rate']:+.2f}%" for h in holdings]
         selected_idx = st.selectbox(
@@ -221,7 +221,7 @@ def render_risk_tab(api, screener, holdings, proposals, realtime_detection_fragm
         h_df["수익률(%)"] = h_df["수익률(%)"].apply(lambda x: f"{x:+.2f}%")
         h_df["평가손익(원)"] = h_df["평가손익(원)"].apply(lambda x: f"{x:+,.0f}")
         h_df["평가금액(원)"] = h_df["평가금액(원)"].apply(lambda x: f"{x:,.0f}")
-        st.dataframe(h_df, use_container_width=True)
+        st.dataframe(h_df, width="stretch")
 
 def render_execution_tab(api):
     """주문/체결 내역 탭 (Execution)"""
@@ -233,7 +233,7 @@ def render_execution_tab(api):
         st.info("금일 전송된 주문 내역이 없습니다.")
     else:
         o_df = pd.DataFrame(orders)
-        st.dataframe(o_df, use_container_width=True)
+        st.dataframe(o_df, width="stretch")
 
 def render_performance_tab(api):
     """실현/미실현 손익 분석 탭 (Performance)"""
@@ -327,7 +327,7 @@ def render_performance_tab(api):
             pbs_df["매수금액(원)"] = pbs_df["매수금액(원)"].apply(lambda x: f"{x:,.0f}")
             pbs_df["매도금액(원)"] = pbs_df["매도금액(원)"].apply(lambda x: f"{x:,.0f}")
             pbs_df["실현손익(원)"] = pbs_df["실현손익(원)"].apply(lambda x: f"{x:+,.0f}")
-            st.dataframe(pbs_df, use_container_width=True)
+            st.dataframe(pbs_df, width="stretch")
 
             fig_profit = go.Figure(go.Bar(
                 x=[v["name"] for v in sold_stocks.values()],
