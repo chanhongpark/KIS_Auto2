@@ -121,6 +121,8 @@ MARKET_REGIME_PRESETS: Dict[str, Dict[str, Any]] = {
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "mock_trading": True,                    # 모의투자 여부 (True: 모의, False: 실전)
     "regime_preset_mode": "AUTO",            # 국면 모드: 'AUTO'(지수 자동감지), 'BULL', 'VOLATILE', 'BEAR', 'CUSTOM'
+    "strategy_name": "momentum",             # 매수/매도 전략 이름 (플러그인 전략)
+    "strategy_settings": {},                 # 전략별 고유 설정 (예: {"momentum": {"score_cap_trend": 40, ...}})
     "target_profit_rate": 0.08,             # 목표 익절 수익률 (+8.0%)
     "stop_loss_rate": -0.05,                # 손절 수익률 (-5.0%)
     "max_buy_budget_per_stock": 500000,     # 1종목당 최대 매수 한도 (원)
@@ -344,6 +346,68 @@ def get_effective_settings_for_regime(detected_regime: str, base_settings: Optio
 
     resolved.update(user_settings)
     return resolved
+
+
+# ==============================================================================
+# 전략별 고유 설정 관리 (Strategy-specific Settings)
+# ==============================================================================
+
+def get_strategy_settings(strategy_name: Optional[str] = None) -> Dict[str, Any]:
+    """
+    특정 전략의 고유 설정 dict 반환.
+    strategy_name이 None이면 현재 활성 전략의 설정을 반환.
+    """
+    name = strategy_name or CURRENT_SETTINGS.get("strategy_name", "momentum")
+    strategy_settings = CURRENT_SETTINGS.get("strategy_settings", {}) or {}
+    return dict(strategy_settings.get(name, {}))
+
+
+def get_effective_strategy_settings(
+    strategy_name: Optional[str] = None,
+    base_settings: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """
+    전략별 고유 설정을 전역 설정에 병합한 최종 유효 설정 반환.
+    우선순위: 전역 설정 < 전략별 고유 설정 < base_settings(호출 시 오버라이드)
+    """
+    name = strategy_name or CURRENT_SETTINGS.get("strategy_name", "momentum")
+    merged = CURRENT_SETTINGS.copy()
+    merged.pop("strategy_settings", None)  # 중첩 dict 제거
+
+    # 전략별 고유 설정 병합
+    strategy_specific = get_strategy_settings(name)
+    merged.update(strategy_specific)
+
+    # 호출 시 오버라이드 병합
+    if base_settings:
+        merged.update(base_settings)
+
+    return merged
+
+
+def save_strategy_settings(
+    strategy_name: str,
+    strategy_settings: Dict[str, Any],
+    global_settings: Optional[Dict[str, Any]] = None
+) -> bool:
+    """
+    특정 전략의 고유 설정을 저장.
+    global_settings가 주어지면 전역 설정도 함께 저장 (strategy_settings 키는 자동 병합).
+    """
+    current = load_settings().copy()
+    strategy_map = dict(current.get("strategy_settings", {}) or {})
+    strategy_map[strategy_name] = dict(strategy_settings)
+
+    if global_settings is not None:
+        merged = current.copy()
+        merged.update(global_settings)
+        merged["strategy_settings"] = strategy_map
+        return save_settings(merged)
+
+    # 전역 설정 변경 없이 전략별 설정만 저장
+    current["strategy_settings"] = strategy_map
+    return save_settings(current)
+
 
 CURRENT_SETTINGS = load_settings()
 

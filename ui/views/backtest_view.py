@@ -11,6 +11,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from time_utils import today
 from backtester import Backtester
+from core.strategy import list_strategies
 import config
 
 def render_backtest():
@@ -100,6 +101,19 @@ def render_backtest():
                 ["관심종목 100개 전체 (Watchlist)", "대형 우량주 10개 (Top 10)", "직접 입력"]
             )
 
+            # 전략 선택 (플러그인 전략)
+            strategies = list_strategies()
+            strategy_options = {s["name"]: f"{s['display_name']} - {s.get('description', '')}" for s in strategies}
+            current_strategy = config.CURRENT_SETTINGS.get("strategy_name", "momentum")
+            if current_strategy not in strategy_options:
+                current_strategy = strategies[0]["name"] if strategies else "momentum"
+            bt_strategy = st.selectbox(
+                "백테스트 전략 선택 (플러그인 전략)",
+                options=list(strategy_options.keys()),
+                format_func=lambda x: strategy_options.get(x, x),
+                index=list(strategy_options.keys()).index(current_strategy) if current_strategy in strategy_options else 0
+            )
+
         if universe_mode == "관심종목 100개 전체 (Watchlist)":
             bt_universe = config.CURRENT_SETTINGS.get("watchlist", [])
         elif universe_mode == "대형 우량주 10개 (Top 10)":
@@ -145,7 +159,8 @@ def render_backtest():
                 budget_per_stock=float(bt_budget),
                 max_holdings=int(bt_max_hold),
                 target_profit_rate=float(bt_target_profit),
-                stop_loss_rate=float(bt_stop_loss)
+                stop_loss_rate=float(bt_stop_loss),
+                strategy_name=bt_strategy
             )
 
             with st.spinner("과거 데이터 기반 전략 시뮬레이션 계산 중..."):

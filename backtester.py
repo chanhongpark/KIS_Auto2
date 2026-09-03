@@ -14,11 +14,7 @@ import FinanceDataReader as fdr
 import config
 from screener import StockScreener
 from core.indicators import calculate_technical_indicators
-from core.strategy import (
-    evaluate_buy_signals_from_df as core_evaluate_buy_signals_from_df,
-    evaluate_sell_signals_from_df as core_evaluate_sell_signals_from_df,
-    get_market_regime
-)
+from core.strategy import get_strategy, get_default_strategy_name
 
 logger = logging.getLogger("Backtester")
 
@@ -36,7 +32,8 @@ class Backtester:
         target_profit_rate: float = 0.08,   # 개선 1: +8% 목표 익절
         stop_loss_rate: float = -0.05,       # 개선 2: -5% 동적 손절 하한
         fee_rate: float = 0.0015,           # 매수/매도 수수료 (0.15%)
-        tax_rate: float = 0.0020            # 매도 시 거래세 (0.20%)
+        tax_rate: float = 0.0020,           # 매도 시 거래세 (0.20%)
+        strategy_name: Optional[str] = None
     ):
         self.start_date = start_date
         self.end_date = end_date
@@ -48,7 +45,8 @@ class Backtester:
         self.stop_loss_rate = stop_loss_rate
         self.fee_rate = fee_rate
         self.tax_rate = tax_rate
-        self.screener = StockScreener()
+        self.strategy = get_strategy(strategy_name or config.CURRENT_SETTINGS.get("strategy_name", get_default_strategy_name()))
+        self.screener = StockScreener(strategy_name=strategy_name)
 
     def fetch_universe_data(self, progress_callback=None) -> Dict[str, pd.DataFrame]:
         """유니버스 전 종목에 대해 백테스트 시작일 이전 120영업일부터의 일봉 데이터 다운로드 및 로컬 캐싱"""
@@ -183,7 +181,7 @@ class Backtester:
             if bench_df is not None and not bench_df.empty:
                 bench_sub = bench_df[bench_df["date"] <= current_date]
                 if len(bench_sub) >= 20:
-                    market_regime = get_market_regime(bench_sub, ma_period=int(config.CURRENT_SETTINGS.get("market_regime_ma_period", 20)))
+                    market_regime = self.strategy.get_market_regime(bench_sub, ma_period=int(config.CURRENT_SETTINGS.get("market_regime_ma_period", 20)))
 
             eff_settings = config.get_effective_settings_for_regime(market_regime.get("regime", "BULL"), config.CURRENT_SETTINGS)
             daily_stop_loss_rate = float(eff_settings.get("stop_loss_rate", self.stop_loss_rate))
@@ -232,7 +230,7 @@ class Backtester:
                 df_tech = sub_df.tail(65)
                 is_recently_bought = (pos["holding_days"] < 2)
 
-                sell_signal = core_evaluate_sell_signals_from_df(
+                sell_signal = self.strategy.evaluate_sell(
                     holding=holding_dict,
                     df=df_tech,
                     is_recently_bought=is_recently_bought,
@@ -320,7 +318,7 @@ class Backtester:
                     sub_65 = sub_df.tail(65)
 
                     # core 매수 신호 단일 원천 함수 호출
-                    signal = core_evaluate_buy_signals_from_df(
+                    signal = self.strategy.evaluate_buy(
                         df=sub_65,
                         code=code,
                         name=v["name"],

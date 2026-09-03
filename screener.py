@@ -16,19 +16,15 @@ from time_utils import today, now_str
 from core.storage import safe_load_json, atomic_save_json
 from core.indicators import calculate_technical_indicators
 from core.position_tracker import PositionTracker, POSITIONS_STATE_FILE, COOLDOWN_FILE
-from core.strategy import (
-    get_market_regime as core_get_market_regime,
-    evaluate_buy_signals_from_df as core_evaluate_buy_signals_from_df,
-    evaluate_sell_signals_from_df as core_evaluate_sell_signals_from_df,
-    calculate_position_size as core_calculate_position_size
-)
+from core.strategy import get_strategy, get_default_strategy_name
 
 PROPOSALS_FILE = os.path.join(os.path.dirname(__file__), "proposals.json")
 
 class StockScreener:
-    def __init__(self, api_client: Optional[KISApiClient] = None):
+    def __init__(self, api_client: Optional[KISApiClient] = None, strategy_name: Optional[str] = None):
         self.logger = logging.getLogger("Screener")
         self.api = api_client or KISApiClient()
+        self.strategy = get_strategy(strategy_name or config.CURRENT_SETTINGS.get("strategy_name", get_default_strategy_name()))
         self.position_tracker = PositionTracker(
             positions_file=POSITIONS_STATE_FILE,
             cooldown_file=COOLDOWN_FILE
@@ -88,7 +84,7 @@ class StockScreener:
             if not candles or len(candles) < 20:
                 return {"regime": "NORMAL", "below_ma20": False, "downtrend": False, "ma20": 0.0, "current": 0.0}
             ma_period = int(config.CURRENT_SETTINGS.get("market_regime_ma_period", 20))
-            return core_get_market_regime(candles, ma_period=ma_period)
+            return self.strategy.get_market_regime(candles, ma_period=ma_period)
         except Exception as e:
             self.logger.warning(f"[{market}] 시장 국면 판단 중 예외: {e}")
             return {"regime": "NORMAL", "below_ma20": False, "downtrend": False, "ma20": 0.0, "current": 0.0}
@@ -118,7 +114,7 @@ class StockScreener:
     ) -> Optional[Dict[str, Any]]:
         """기술적 보조지표 DataFrame을 바탕으로 매수 신호 평가"""
         in_cooldown = self._is_in_cooldown(code, current_date=current_date, use_file_cooldown=use_file_cooldown)
-        return core_evaluate_buy_signals_from_df(
+        return self.strategy.evaluate_buy(
             df=df,
             code=code,
             name=name,
@@ -193,7 +189,7 @@ class StockScreener:
         holding_days: int = 0
     ) -> Optional[Dict[str, Any]]:
         """보유 종목의 수익률 및 지표 기반 매도 신호 평가"""
-        res = core_evaluate_sell_signals_from_df(
+        res = self.strategy.evaluate_sell(
             holding=holding,
             df=df,
             is_recently_bought=is_recently_bought,

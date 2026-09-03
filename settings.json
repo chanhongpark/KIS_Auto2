@@ -1,6 +1,7 @@
 {
   "mock_trading": false,
   "regime_preset_mode": "VOLATILE",
+  "strategy_name": "momentum",
   "target_profit_rate": 0.08,
   "stop_loss_rate": -0.05,
   "max_buy_budget_per_stock": 500000,
