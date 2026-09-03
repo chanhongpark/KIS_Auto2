@@ -6,6 +6,7 @@ import time
 import datetime
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 import plotly.graph_objects as go
 from time_utils import now_str, today
 from telegram_notifier import notifier
@@ -71,14 +72,53 @@ def render_overview_tab(api, screener, summary, holdings, proposals, holding_cod
     if not holdings:
         st.info("현재 계좌에 보유 중인 주식이 없습니다.")
     else:
-        h_df = pd.DataFrame(holdings)[["name", "code", "quantity", "avg_buy_price", "current_price", "profit_rate", "profit_loss", "eval_amount"]].copy()
-        h_df.columns = ["종목명", "코드", "보유수량", "매입평균가", "현재가", "수익률(%)", "평가손익(원)", "평가금액(원)"]
-        h_df["매입평균가"] = h_df["매입평균가"].apply(lambda x: f"{x:,.0f}")
-        h_df["현재가"] = h_df["현재가"].apply(lambda x: f"{x:,.0f}")
-        h_df["수익률(%)"] = h_df["수익률(%)"].apply(lambda x: f"{x:+.2f}%")
-        h_df["평가손익(원)"] = h_df["평가손익(원)"].apply(lambda x: f"{x:+,.0f}")
-        h_df["평가금액(원)"] = h_df["평가금액(원)"].apply(lambda x: f"{x:,.0f}")
-        st.dataframe(h_df, width="stretch")
+        # 수익률 아이콘 포함 HTML 테이블 렌더링 (플러스=빨강 ▲, 마이너스=파랑 ▼)
+        # st.components.v1.html()을 사용하여 HTML을 정확히 렌더링 (st.markdown은 HTML을 이스케이프함)
+        html_rows = []
+        for h in holdings:
+            pr = float(h.get("profit_rate", 0))
+            if pr > 0:
+                icon_html = '<span style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;font-size:0.75rem;font-weight:800;margin-right:6px;vertical-align:middle;background:rgba(239,68,68,0.2);color:#ef4444;border:1px solid rgba(239,68,68,0.5);box-shadow:0 0 8px rgba(239,68,68,0.3);">▲</span>'
+            elif pr < 0:
+                icon_html = '<span style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;font-size:0.75rem;font-weight:800;margin-right:6px;vertical-align:middle;background:rgba(59,130,246,0.2);color:#3b82f6;border:1px solid rgba(59,130,246,0.5);box-shadow:0 0 8px rgba(59,130,246,0.3);">▼</span>'
+            else:
+                icon_html = '<span style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;font-size:0.75rem;font-weight:800;margin-right:6px;vertical-align:middle;background:rgba(148,163,184,0.2);color:#94a3b8;border:1px solid rgba(148,163,184,0.5);">•</span>'
+            html_rows.append(f"""
+                <tr>
+                    <td style="text-align:center;">{icon_html}</td>
+                    <td>{h['name']}</td>
+                    <td>{h['code']}</td>
+                    <td style="text-align:right;">{h['quantity']:,}</td>
+                    <td style="text-align:right;">{h['avg_buy_price']:,.0f}</td>
+                    <td style="text-align:right;">{h['current_price']:,.0f}</td>
+                    <td style="text-align:right; color:{'#ef4444' if pr > 0 else '#3b82f6' if pr < 0 else '#94a3b8'};">{pr:+.2f}%</td>
+                    <td style="text-align:right; color:{'#ef4444' if h.get('profit_loss', 0) > 0 else '#3b82f6' if h.get('profit_loss', 0) < 0 else '#94a3b8'};">{h.get('profit_loss', 0):+,.0f}</td>
+                    <td style="text-align:right;">{h.get('eval_amount', 0):,.0f}</td>
+                </tr>
+            """)
+        html_table = f"""
+        <div style="background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:16px;margin-bottom:10px;">
+        <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
+            <thead>
+                <tr>
+                    <th style="background:#1e293b;color:#94a3b8;font-weight:600;padding:8px 10px;text-align:center;border-bottom:2px solid #334155;white-space:nowrap;">수익</th>
+                    <th style="background:#1e293b;color:#94a3b8;font-weight:600;padding:8px 10px;text-align:left;border-bottom:2px solid #334155;white-space:nowrap;">종목명</th>
+                    <th style="background:#1e293b;color:#94a3b8;font-weight:600;padding:8px 10px;text-align:left;border-bottom:2px solid #334155;white-space:nowrap;">코드</th>
+                    <th style="background:#1e293b;color:#94a3b8;font-weight:600;padding:8px 10px;text-align:right;border-bottom:2px solid #334155;white-space:nowrap;">보유수량</th>
+                    <th style="background:#1e293b;color:#94a3b8;font-weight:600;padding:8px 10px;text-align:right;border-bottom:2px solid #334155;white-space:nowrap;">매입평균가</th>
+                    <th style="background:#1e293b;color:#94a3b8;font-weight:600;padding:8px 10px;text-align:right;border-bottom:2px solid #334155;white-space:nowrap;">현재가</th>
+                    <th style="background:#1e293b;color:#94a3b8;font-weight:600;padding:8px 10px;text-align:right;border-bottom:2px solid #334155;white-space:nowrap;">수익률(%)</th>
+                    <th style="background:#1e293b;color:#94a3b8;font-weight:600;padding:8px 10px;text-align:right;border-bottom:2px solid #334155;white-space:nowrap;">평가손익(원)</th>
+                    <th style="background:#1e293b;color:#94a3b8;font-weight:600;padding:8px 10px;text-align:right;border-bottom:2px solid #334155;white-space:nowrap;">평가금액(원)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {''.join(html_rows)}
+            </tbody>
+        </table>
+        </div>
+        """
+        st.components.v1.html(html_table, height=80 + len(holdings) * 40, scrolling=True)
 
         holding_options = [f"{h['name']} ({h['code']}) | 평단가: {h['avg_buy_price']:,.0f}원 | 수익률: {h['profit_rate']:+.2f}%" for h in holdings]
         selected_idx = st.selectbox(
@@ -97,6 +137,20 @@ def render_overview_tab(api, screener, summary, holdings, proposals, holding_cod
                 avg_buy_price=float(selected_h.get("avg_buy_price", 0)),
                 profit_rate=float(selected_h.get("profit_rate", 0))
             )
+
+def _get_sell_button_style(sell_type: str, is_urgent: bool) -> tuple:
+    """매도 유형에 따른 버튼 key 접두사와 아이콘/텍스트 반환"""
+    if is_urgent or "긴급" in sell_type or "손절" in sell_type:
+        return "urgent", "🚨 긴급 매도"
+    if "익절" in sell_type or "트레일링" in sell_type:
+        return "profit", "🎯 익절 매도"
+    if "타임컷" in sell_type:
+        return "timecut", "⏳ 타임컷 매도"
+    if "데드크로스" in sell_type or "청산" in sell_type:
+        return "deadcross", "📉 청산 매도"
+    if "RSI" in sell_type or "과열" in sell_type:
+        return "rsi", "🔥 RSI 매도"
+    return "default", "⚡ 매도"
 
 def render_risk_tab(api, screener, holdings, proposals, realtime_detection_fragment):
     """포지션 & 리스크 관리 탭 (Risk Matrix)"""
@@ -180,8 +234,11 @@ def render_risk_tab(api, screener, holdings, proposals, realtime_detection_fragm
                 with sc4:
                     st.write("")
                     st.write("")
-                    btn_text = "🚨 긴급 매도" if is_urgent else f"⚡ 매도 ({sell_ord_type})"
-                    if st.button(btn_text, key=f"btn_sell_{s_item['code']}_{s_idx}", type="primary", width="stretch"):
+                    key_suffix, btn_text = _get_sell_button_style(sell_type, is_urgent)
+                    if sell_ord_type == "지정가" and not is_urgent:
+                        btn_text = f"{btn_text} (지정가)"
+                    btn_key = f"btn_sell_{key_suffix}_{s_item['code']}_{s_idx}"
+                    if st.button(btn_text, key=btn_key, type="primary", width="stretch"):
                         is_sell_limit = (sell_ord_type == "지정가")
                         sell_ord_dv = "00" if is_sell_limit else "01"
                         sell_prc_val = int(sell_target_price) if is_sell_limit else 0
@@ -214,14 +271,28 @@ def render_risk_tab(api, screener, holdings, proposals, realtime_detection_fragm
         st.info("현재 계좌에 보유 중인 주식이 없습니다.")
     else:
         st.write("### 📦 전체 보유 주식 목록")
-        h_df = pd.DataFrame(holdings)[["name", "code", "quantity", "avg_buy_price", "current_price", "profit_rate", "profit_loss", "eval_amount"]].copy()
-        h_df.columns = ["종목명", "코드", "보유수량", "매입평균가", "현재가", "수익률(%)", "평가손익(원)", "평가금액(원)"]
-        h_df["매입평균가"] = h_df["매입평균가"].apply(lambda x: f"{x:,.0f}")
-        h_df["현재가"] = h_df["현재가"].apply(lambda x: f"{x:,.0f}")
-        h_df["수익률(%)"] = h_df["수익률(%)"].apply(lambda x: f"{x:+.2f}%")
-        h_df["평가손익(원)"] = h_df["평가손익(원)"].apply(lambda x: f"{x:+,.0f}")
-        h_df["평가금액(원)"] = h_df["평가금액(원)"].apply(lambda x: f"{x:,.0f}")
-        st.dataframe(h_df, width="stretch")
+        # 표 형태로 출력 (Streamlit dataframe)
+        holdings_df = pd.DataFrame([
+            {
+                "수익": "▲" if float(h.get("profit_rate", 0)) > 0 else "▼" if float(h.get("profit_rate", 0)) < 0 else "•",
+                "종목명": h["name"],
+                "코드": h["code"],
+                "보유수량": h["quantity"],
+                "매입평균가": h["avg_buy_price"],
+                "현재가": h["current_price"],
+                "수익률(%)": float(h.get("profit_rate", 0)),
+                "평가손익(원)": h.get("profit_loss", 0),
+                "평가금액(원)": h.get("eval_amount", 0),
+            }
+            for h in holdings
+        ])
+        holdings_df["보유수량"] = holdings_df["보유수량"].apply(lambda x: f"{x:,}")
+        holdings_df["매입평균가"] = holdings_df["매입평균가"].apply(lambda x: f"{x:,.0f}")
+        holdings_df["현재가"] = holdings_df["현재가"].apply(lambda x: f"{x:,.0f}")
+        holdings_df["수익률(%)"] = holdings_df["수익률(%)"].apply(lambda x: f"{x:+.2f}%")
+        holdings_df["평가손익(원)"] = holdings_df["평가손익(원)"].apply(lambda x: f"{x:+,.0f}")
+        holdings_df["평가금액(원)"] = holdings_df["평가금액(원)"].apply(lambda x: f"{x:,.0f}")
+        st.dataframe(holdings_df, width="stretch", hide_index=True)
 
 def render_execution_tab(api):
     """주문/체결 내역 탭 (Execution)"""

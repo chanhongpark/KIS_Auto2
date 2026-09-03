@@ -138,6 +138,115 @@ CUSTOM_CSS = """
         padding: 14px 18px;
         margin-bottom: 20px;
     }
+
+    /* ============================================================
+       매도 버튼 색상 (sell button color variants)
+       ============================================================ */
+    .stButton > button[kind="primary"][class*="st-key-btn_sell_urgent"] {
+        background: linear-gradient(135deg, #dc2626, #991b1b) !important;
+        border: 1px solid #ef4444 !important;
+        color: #ffffff !important;
+        box-shadow: 0 0 15px rgba(239, 68, 68, 0.35) !important;
+        font-weight: 700 !important;
+    }
+    .stButton > button[kind="primary"][class*="st-key-btn_sell_urgent"]:hover {
+        background: linear-gradient(135deg, #ef4444, #b91c1c) !important;
+        border-color: #f87171 !important;
+        box-shadow: 0 0 20px rgba(239, 68, 68, 0.5) !important;
+    }
+
+    .stButton > button[kind="primary"][class*="st-key-btn_sell_profit"] {
+        background: linear-gradient(135deg, #2563eb, #1e40af) !important;
+        border: 1px solid #3b82f6 !important;
+        color: #ffffff !important;
+        box-shadow: 0 0 15px rgba(59, 130, 246, 0.35) !important;
+        font-weight: 700 !important;
+    }
+    .stButton > button[kind="primary"][class*="st-key-btn_sell_profit"]:hover {
+        background: linear-gradient(135deg, #3b82f6, #1d4ed8) !important;
+        border-color: #60a5fa !important;
+        box-shadow: 0 0 20px rgba(59, 130, 246, 0.5) !important;
+    }
+
+    .stButton > button[kind="primary"][class*="st-key-btn_sell_timecut"] {
+        background: linear-gradient(135deg, #f59e0b, #b45309) !important;
+        border: 1px solid #fbbf24 !important;
+        color: #ffffff !important;
+        box-shadow: 0 0 15px rgba(245, 158, 11, 0.35) !important;
+        font-weight: 700 !important;
+    }
+    .stButton > button[kind="primary"][class*="st-key-btn_sell_timecut"]:hover {
+        background: linear-gradient(135deg, #fbbf24, #d97706) !important;
+        border-color: #fcd34d !important;
+        box-shadow: 0 0 20px rgba(245, 158, 11, 0.5) !important;
+    }
+
+    .stButton > button[kind="primary"][class*="st-key-btn_sell_deadcross"] {
+        background: linear-gradient(135deg, #7c3aed, #5b21b6) !important;
+        border: 1px solid #8b5cf6 !important;
+        color: #ffffff !important;
+        box-shadow: 0 0 15px rgba(139, 92, 246, 0.35) !important;
+        font-weight: 700 !important;
+    }
+    .stButton > button[kind="primary"][class*="st-key-btn_sell_deadcross"]:hover {
+        background: linear-gradient(135deg, #8b5cf6, #6d28d9) !important;
+        border-color: #a78bfa !important;
+        box-shadow: 0 0 20px rgba(139, 92, 246, 0.5) !important;
+    }
+
+    .stButton > button[kind="primary"][class*="st-key-btn_sell_rsi"] {
+        background: linear-gradient(135deg, #0891b2, #155e75) !important;
+        border: 1px solid #06b6d4 !important;
+        color: #ffffff !important;
+        box-shadow: 0 0 15px rgba(6, 182, 212, 0.35) !important;
+        font-weight: 700 !important;
+    }
+    .stButton > button[kind="primary"][class*="st-key-btn_sell_rsi"]:hover {
+        background: linear-gradient(135deg, #06b6d4, #0e7490) !important;
+        border-color: #22d3ee !important;
+        box-shadow: 0 0 20px rgba(6, 182, 212, 0.5) !important;
+    }
+
+    .stButton > button[kind="primary"][class*="st-key-btn_sell_default"] {
+        background: linear-gradient(135deg, #059669, #065f46) !important;
+        border: 1px solid #10b981 !important;
+        color: #ffffff !important;
+        box-shadow: 0 0 15px rgba(16, 185, 129, 0.35) !important;
+        font-weight: 700 !important;
+    }
+    .stButton > button[kind="primary"][class*="st-key-btn_sell_default"]:hover {
+        background: linear-gradient(135deg, #10b981, #047857) !important;
+        border-color: #34d399 !important;
+        box-shadow: 0 0 20px rgba(16, 185, 129, 0.5) !important;
+    }
+
+    /* ============================================================
+       수익률 아이콘 (profit rate icon)
+       ============================================================ */
+    .profit-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        font-size: 0.75rem;
+        font-weight: 800;
+        margin-right: 6px;
+        vertical-align: middle;
+    }
+    .profit-icon-up {
+        background: rgba(239, 68, 68, 0.2);
+        color: #ef4444;
+        border: 1px solid rgba(239, 68, 68, 0.5);
+        box-shadow: 0 0 8px rgba(239, 68, 68, 0.3);
+    }
+    .profit-icon-down {
+        background: rgba(59, 130, 246, 0.2);
+        color: #3b82f6;
+        border: 1px solid rgba(59, 130, 246, 0.5);
+        box-shadow: 0 0 8px rgba(59, 130, 246, 0.3);
+    }
 </style>
 """
 
