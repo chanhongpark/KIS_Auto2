@@ -85,31 +85,31 @@ def render_overview_tab(api, screener, summary, holdings, proposals, holding_cod
                 icon_html = '<span style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;font-size:0.75rem;font-weight:800;margin-right:6px;vertical-align:middle;background:rgba(148,163,184,0.2);color:#94a3b8;border:1px solid rgba(148,163,184,0.5);">•</span>'
             html_rows.append(f"""
                 <tr>
-                    <td style="text-align:center;">{icon_html}</td>
-                    <td>{h['name']}</td>
-                    <td>{h['code']}</td>
-                    <td style="text-align:right;">{h['quantity']:,}</td>
-                    <td style="text-align:right;">{h['avg_buy_price']:,.0f}</td>
-                    <td style="text-align:right;">{h['current_price']:,.0f}</td>
-                    <td style="text-align:right; color:{'#ef4444' if pr > 0 else '#3b82f6' if pr < 0 else '#94a3b8'};">{pr:+.2f}%</td>
-                    <td style="text-align:right; color:{'#ef4444' if h.get('profit_loss', 0) > 0 else '#3b82f6' if h.get('profit_loss', 0) < 0 else '#94a3b8'};">{h.get('profit_loss', 0):+,.0f}</td>
-                    <td style="text-align:right;">{h.get('eval_amount', 0):,.0f}</td>
+                    <td style="text-align:center;padding:8px 10px;color:#e2e8f0;border-bottom:1px solid #1e293b;">{icon_html}</td>
+                    <td style="padding:8px 10px;color:#f8fafc;font-weight:600;border-bottom:1px solid #1e293b;">{h['name']}</td>
+                    <td style="padding:8px 10px;color:#94a3b8;border-bottom:1px solid #1e293b;">{h['code']}</td>
+                    <td style="text-align:right;padding:8px 10px;color:#e2e8f0;border-bottom:1px solid #1e293b;">{h['quantity']:,}</td>
+                    <td style="text-align:right;padding:8px 10px;color:#e2e8f0;border-bottom:1px solid #1e293b;">{h['avg_buy_price']:,.0f}</td>
+                    <td style="text-align:right;padding:8px 10px;color:#e2e8f0;border-bottom:1px solid #1e293b;">{h['current_price']:,.0f}</td>
+                    <td style="text-align:right;padding:8px 10px;color:{'#f87171' if pr > 0 else '#60a5fa' if pr < 0 else '#94a3b8'};font-weight:700;border-bottom:1px solid #1e293b;">{pr:+.2f}%</td>
+                    <td style="text-align:right;padding:8px 10px;color:{'#f87171' if h.get('profit_loss', 0) > 0 else '#60a5fa' if h.get('profit_loss', 0) < 0 else '#94a3b8'};font-weight:700;border-bottom:1px solid #1e293b;">{h.get('profit_loss', 0):+,.0f}</td>
+                    <td style="text-align:right;padding:8px 10px;color:#e2e8f0;border-bottom:1px solid #1e293b;">{h.get('eval_amount', 0):,.0f}</td>
                 </tr>
             """)
         html_table = f"""
-        <div style="background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:16px;margin-bottom:10px;">
+        <div style="background:#0f172a;border:1px solid #334155;border-radius:12px;padding:16px;margin-bottom:10px;box-shadow:0 4px 20px rgba(0,0,0,0.3);">
         <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
             <thead>
                 <tr>
-                    <th style="background:#1e293b;color:#94a3b8;font-weight:600;padding:8px 10px;text-align:center;border-bottom:2px solid #334155;white-space:nowrap;">수익</th>
-                    <th style="background:#1e293b;color:#94a3b8;font-weight:600;padding:8px 10px;text-align:left;border-bottom:2px solid #334155;white-space:nowrap;">종목명</th>
-                    <th style="background:#1e293b;color:#94a3b8;font-weight:600;padding:8px 10px;text-align:left;border-bottom:2px solid #334155;white-space:nowrap;">코드</th>
-                    <th style="background:#1e293b;color:#94a3b8;font-weight:600;padding:8px 10px;text-align:right;border-bottom:2px solid #334155;white-space:nowrap;">보유수량</th>
-                    <th style="background:#1e293b;color:#94a3b8;font-weight:600;padding:8px 10px;text-align:right;border-bottom:2px solid #334155;white-space:nowrap;">매입평균가</th>
-                    <th style="background:#1e293b;color:#94a3b8;font-weight:600;padding:8px 10px;text-align:right;border-bottom:2px solid #334155;white-space:nowrap;">현재가</th>
-                    <th style="background:#1e293b;color:#94a3b8;font-weight:600;padding:8px 10px;text-align:right;border-bottom:2px solid #334155;white-space:nowrap;">수익률(%)</th>
-                    <th style="background:#1e293b;color:#94a3b8;font-weight:600;padding:8px 10px;text-align:right;border-bottom:2px solid #334155;white-space:nowrap;">평가손익(원)</th>
-                    <th style="background:#1e293b;color:#94a3b8;font-weight:600;padding:8px 10px;text-align:right;border-bottom:2px solid #334155;white-space:nowrap;">평가금액(원)</th>
+                    <th style="background:#1e293b;color:#f8fafc;font-weight:700;padding:10px 10px;text-align:center;border-bottom:2px solid #475569;white-space:nowrap;">수익</th>
+                    <th style="background:#1e293b;color:#f8fafc;font-weight:700;padding:10px 10px;text-align:left;border-bottom:2px solid #475569;white-space:nowrap;">종목명</th>
+                    <th style="background:#1e293b;color:#f8fafc;font-weight:700;padding:10px 10px;text-align:left;border-bottom:2px solid #475569;white-space:nowrap;">코드</th>
+                    <th style="background:#1e293b;color:#f8fafc;font-weight:700;padding:10px 10px;text-align:right;border-bottom:2px solid #475569;white-space:nowrap;">보유수량</th>
+                    <th style="background:#1e293b;color:#f8fafc;font-weight:700;padding:10px 10px;text-align:right;border-bottom:2px solid #475569;white-space:nowrap;">매입평균가</th>
+                    <th style="background:#1e293b;color:#f8fafc;font-weight:700;padding:10px 10px;text-align:right;border-bottom:2px solid #475569;white-space:nowrap;">현재가</th>
+                    <th style="background:#1e293b;color:#f8fafc;font-weight:700;padding:10px 10px;text-align:right;border-bottom:2px solid #475569;white-space:nowrap;">수익률(%)</th>
+                    <th style="background:#1e293b;color:#f8fafc;font-weight:700;padding:10px 10px;text-align:right;border-bottom:2px solid #475569;white-space:nowrap;">평가손익(원)</th>
+                    <th style="background:#1e293b;color:#f8fafc;font-weight:700;padding:10px 10px;text-align:right;border-bottom:2px solid #475569;white-space:nowrap;">평가금액(원)</th>
                 </tr>
             </thead>
             <tbody>
