@@ -45,16 +45,28 @@ if os.path.exists(ENV_PATH):
     except Exception as e:
         logger.warning(f".env 로드 실패: {e}")
 
+def _get_env_or_secret(key: str, default: str = "") -> str:
+    val = os.getenv(key, "")
+    if val:
+        return val
+    try:
+        import streamlit as st
+        if hasattr(st, "secrets") and key in st.secrets:
+            return str(st.secrets[key])
+    except Exception:
+        pass
+    return default
+
 # KIS API 계정 정보
-APP_KEY = os.getenv("KIS_APP_KEY", "")
-APP_SECRET = os.getenv("KIS_APP_SECRET", "")
-CANO = os.getenv("KIS_CANO", "")
-ACNT_PRDT_CD = os.getenv("KIS_ACNT_PRDT_CD", "01")
-ACCOUNT_PWD = os.getenv("KIS_ACCOUNT_PWD", "")
+APP_KEY = _get_env_or_secret("KIS_APP_KEY", "")
+APP_SECRET = _get_env_or_secret("KIS_APP_SECRET", "")
+CANO = _get_env_or_secret("KIS_CANO", "")
+ACNT_PRDT_CD = _get_env_or_secret("KIS_ACNT_PRDT_CD", "01")
+ACCOUNT_PWD = _get_env_or_secret("KIS_ACCOUNT_PWD", "")
 
 # 텔레그램 알림 설정
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+TELEGRAM_BOT_TOKEN = _get_env_or_secret("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = _get_env_or_secret("TELEGRAM_CHAT_ID", "")
 
 # API 엔드포인트 URL
 URL_BASE_MOCK = "https://openapivts.koreainvestment.com:29443"
@@ -64,10 +76,10 @@ URL_BASE_REAL = "https://openapi.koreainvestment.com:9443"
 SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "settings.json")
 
 # Google Sheets 동기화 설정
-GOOGLE_SHEET_ENABLED = os.getenv("GOOGLE_SHEET_ENABLED", "true").lower() == "true"
-GOOGLE_SHEET_NAME = os.getenv("GOOGLE_SHEET_NAME", "KIS_Auto2_매매일지")
-GOOGLE_SHEET_KEY = os.getenv("GOOGLE_SHEET_KEY", "")  # 구글 시트 ID/Key
-GCP_SERVICE_ACCOUNT_JSON = os.getenv("GCP_SERVICE_ACCOUNT_JSON", "kis-auto-trader-1024280eca64.json")
+GOOGLE_SHEET_ENABLED = _get_env_or_secret("GOOGLE_SHEET_ENABLED", "true").lower() == "true"
+GOOGLE_SHEET_NAME = _get_env_or_secret("GOOGLE_SHEET_NAME", "KIS_Auto2_매매일지")
+GOOGLE_SHEET_KEY = _get_env_or_secret("GOOGLE_SHEET_KEY", "")  # 구글 시트 ID/Key
+GCP_SERVICE_ACCOUNT_JSON = _get_env_or_secret("GCP_SERVICE_ACCOUNT_JSON", "kis-auto-trader-1024280eca64.json")
 
 # ==============================================================================
 # 시장 국면별 3대 프리셋 정의 (Market Regime Presets)

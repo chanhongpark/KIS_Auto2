@@ -37,6 +37,13 @@ class GoogleSheetManager:
     ):
         self.sheet_name = sheet_name or getattr(config, "GOOGLE_SHEET_NAME", "KIS_Auto2_매매일지")
         self.sheet_key = sheet_key or getattr(config, "GOOGLE_SHEET_KEY", "")
+        if not self.sheet_key:
+            try:
+                import streamlit as st
+                if hasattr(st, "secrets") and "GOOGLE_SHEET_KEY" in st.secrets:
+                    self.sheet_key = str(st.secrets["GOOGLE_SHEET_KEY"])
+            except Exception:
+                pass
         self.enabled = enabled if enabled is not None else getattr(config, "GOOGLE_SHEET_ENABLED", True)
 
         self.client: Optional[Any] = None
@@ -53,15 +60,22 @@ class GoogleSheetManager:
 
     def _get_credentials(self) -> Optional[Any]:
         """다양한 경로에서 GCP Service Account Credentials 획득"""
-        # 1. Streamlit Secrets (st.secrets["gcp_service_account"])
+        # 1. Streamlit Secrets (st.secrets["gcp_service_account"] 또는 st.secrets["GCP_SERVICE_ACCOUNT_JSON"])
         try:
             import streamlit as st
-            if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
-                secret_dict = dict(st.secrets["gcp_service_account"])
-                logger.info("Streamlit Secrets에서 GCP 서비스 계정 정보 로드 성공")
-                return Credentials.from_service_account_info(secret_dict, scopes=self.SCOPES)
-        except Exception:
-            pass
+            if hasattr(st, "secrets"):
+                if "gcp_service_account" in st.secrets:
+                    secret_dict = dict(st.secrets["gcp_service_account"])
+                    logger.info("Streamlit Secrets [gcp_service_account]에서 GCP 서비스 계정 정보 로드 성공")
+                    return Credentials.from_service_account_info(secret_dict, scopes=self.SCOPES)
+                elif "GCP_SERVICE_ACCOUNT_JSON" in st.secrets:
+                    val = st.secrets["GCP_SERVICE_ACCOUNT_JSON"]
+                    if isinstance(val, str) and val.strip().startswith("{"):
+                        return Credentials.from_service_account_info(json.loads(val), scopes=self.SCOPES)
+                    elif hasattr(val, "items"):
+                        return Credentials.from_service_account_info(dict(val), scopes=self.SCOPES)
+        except Exception as e:
+            logger.debug(f"Streamlit Secrets GCP 로드 예외: {e}")
 
         # 2. 환경변수 GCP_SERVICE_ACCOUNT_JSON (JSON 문자열 또는 파일 경로)
         env_json = getattr(config, "GCP_SERVICE_ACCOUNT_JSON", "") or os.getenv("GCP_SERVICE_ACCOUNT_JSON", "")
