@@ -258,6 +258,8 @@ class KISApiClient:
                     "prdy_vrss": float(output.get("prdy_vrss", 0)),
                     "prdy_ctrt": float(output.get("prdy_ctrt", 0)),
                     "acml_vol": int(output.get("acml_vol", 0)),
+                    "d250_hgpr": float(output.get("d250_hgpr", 0)),
+                    "d250_hgpr_vrss_prpr_rate": float(output.get("d250_hgpr_vrss_prpr_rate", 0)),
                     "raw": output
                 }
             return data

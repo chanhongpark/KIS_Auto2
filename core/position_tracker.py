@@ -25,19 +25,72 @@ class PositionTracker:
     # 라이브 포지션 상태 (최고가 & 1차 50% 분할 익절 상태) 관리
     # =========================================================================
     def load_positions_state(self) -> Dict[str, Dict[str, Any]]:
-        """라이브 보유 종목별 최고가 및 1차 익절 상태 로드"""
-        return safe_load_json(self.positions_file, default={})
+        """라이브 보유 종목별 최고가 및 1차 익절 상태 로드 (로컬 JSON + Google Sheet 동기화)"""
+        local_state = safe_load_json(self.positions_file, default={})
+        try:
+            from google_sheet_manager import get_sheet_manager
+            sheet_mgr = get_sheet_manager()
+            if sheet_mgr.is_connected:
+                sheet_state = sheet_mgr.read_positions_state_from_sheet()
+                if sheet_state:
+                    local_state.update(sheet_state)
+        except Exception as e:
+            logger.debug(f"Google Sheet 포지션 상태 읽기 생략: {e}")
+        return local_state
 
     def save_positions_state(self, state: Dict[str, Dict[str, Any]]) -> bool:
-        """라이브 보유 종목별 최고가 및 1차 익절 상태 저장"""
-        return atomic_save_json(self.positions_file, state)
+        """라이브 보유 종목별 최고가 및 1차 익절 상태 저장 (로컬 JSON + Google Sheet)"""
+        ok = atomic_save_json(self.positions_file, state)
+        try:
+            from google_sheet_manager import get_sheet_manager
+            sheet_mgr = get_sheet_manager()
+            if sheet_mgr.is_connected:
+                sheet_mgr.sync_positions_state_to_sheet(state)
+        except Exception as e:
+            logger.debug(f"Google Sheet 포지션 상태 동기화 생략: {e}")
+        return ok
+
+    def record_buy(
+        self,
+        code: str,
+        name: str,
+        price: float,
+        qty: int,
+        strategy: str = "momentum",
+        strategy_display_name: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """신규 매수 체결 종목의 포지션 정보 및 진입 전략 기록"""
+        state = self.load_positions_state()
+        pos = state.get(code, {})
+        pos["code"] = code
+        pos["name"] = name
+        pos["avg_buy_price"] = price
+        pos["highest_price"] = max(pos.get("highest_price", price), price)
+        pos["is_partial_sold"] = False
+        pos["strategy"] = strategy
+        pos["strategy_display_name"] = strategy_display_name or strategy
+        pos["buy_date"] = today().strftime("%Y%m%d")
+        pos["last_updated"] = now_str()
+        state[code] = pos
+        self.save_positions_state(state)
+        logger.info(f"[{name}({code})] 포지션 등록: 매수전략='{strategy}', 단가={price:,.0f}원, 수량={qty}주")
+        return pos
+
+    def get_position_strategy(self, code: str) -> Optional[str]:
+        """보유 종목의 매수 진입 전략 반환"""
+        state = self.load_positions_state()
+        pos = state.get(code)
+        if pos and pos.get("strategy"):
+            return pos["strategy"]
+        return None
 
     def update_position_state(
         self,
         code: str,
         current_price: float,
         avg_buy_price: float,
-        is_partial_take: bool = False
+        is_partial_take: bool = False,
+        strategy: Optional[str] = None
     ) -> Dict[str, Any]:
         """라이브 종목별 최고가 갱신 및 상태 반환"""
         state = self.load_positions_state()
@@ -47,6 +100,8 @@ class PositionTracker:
 
         pos["highest_price"] = highest_price
         pos["is_partial_sold"] = is_partial_sold
+        if strategy and "strategy" not in pos:
+            pos["strategy"] = strategy
         pos["last_updated"] = now_str()
         state[code] = pos
         self.save_positions_state(state)
@@ -63,12 +118,30 @@ class PositionTracker:
     # 손절 종목 쿨다운 (Cool-down) 관리
     # =========================================================================
     def load_cooldown(self) -> Dict[str, str]:
-        """쿨다운 상태 로드: {code: 손절 청산일(YYYYMMDD)} (백테스팅 전용)"""
-        return safe_load_json(self.cooldown_file, default={})
+        """쿨다운 상태 로드: {code: 손절 청산일(YYYYMMDD)}"""
+        local_cd = safe_load_json(self.cooldown_file, default={})
+        try:
+            from google_sheet_manager import get_sheet_manager
+            sheet_mgr = get_sheet_manager()
+            if sheet_mgr.is_connected:
+                sheet_cd = sheet_mgr.read_cooldown_from_sheet()
+                if sheet_cd:
+                    local_cd.update(sheet_cd)
+        except Exception as e:
+            logger.debug(f"Google Sheet 쿨다운 읽기 생략: {e}")
+        return local_cd
 
     def save_cooldown(self, cooldown_map: Dict[str, str]) -> bool:
-        """쿨다운 상태 저장 (백테스팅 전용)"""
-        return atomic_save_json(self.cooldown_file, cooldown_map)
+        """쿨다운 상태 저장 (로컬 JSON + Google Sheet)"""
+        ok = atomic_save_json(self.cooldown_file, cooldown_map)
+        try:
+            from google_sheet_manager import get_sheet_manager
+            sheet_mgr = get_sheet_manager()
+            if sheet_mgr.is_connected:
+                sheet_mgr.sync_cooldown_to_sheet(cooldown_map)
+        except Exception as e:
+            logger.debug(f"Google Sheet 쿨다운 동기화 생략: {e}")
+        return ok
 
     def get_stop_loss_date_from_api(self, api_client: Any, code: str, current_date: Optional[str] = None) -> Optional[str]:
         """

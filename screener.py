@@ -16,7 +16,7 @@ from time_utils import today, now_str
 from core.storage import safe_load_json, atomic_save_json
 from core.indicators import calculate_technical_indicators
 from core.position_tracker import PositionTracker, POSITIONS_STATE_FILE, COOLDOWN_FILE
-from core.strategy import get_strategy, get_default_strategy_name
+from core.strategy import get_strategy, get_default_strategy_name, get_active_strategies
 
 PROPOSALS_FILE = os.path.join(os.path.dirname(__file__), "proposals.json")
 
@@ -25,6 +25,7 @@ class StockScreener:
         self.logger = logging.getLogger("Screener")
         self.api = api_client or KISApiClient()
         self.strategy = get_strategy(strategy_name or config.CURRENT_SETTINGS.get("strategy_name", get_default_strategy_name()))
+        self.strategies = get_active_strategies()
         self.position_tracker = PositionTracker(
             positions_file=POSITIONS_STATE_FILE,
             cooldown_file=COOLDOWN_FILE
@@ -39,8 +40,45 @@ class StockScreener:
     def _save_positions_state(self, state: Dict[str, Dict[str, Any]]) -> bool:
         return self.position_tracker.save_positions_state(state)
 
-    def _update_position_state(self, code: str, current_price: float, avg_buy_price: float, is_partial_take: bool = False) -> Dict[str, Any]:
-        return self.position_tracker.update_position_state(code, current_price, avg_buy_price, is_partial_take)
+    def _update_position_state(
+        self,
+        code: str,
+        current_price: float,
+        avg_buy_price: float,
+        is_partial_take: bool = False,
+        strategy: Optional[str] = None
+    ) -> Dict[str, Any]:
+        return self.position_tracker.update_position_state(code, current_price, avg_buy_price, is_partial_take, strategy=strategy)
+
+    def _get_holding_strategy(self, code: str):
+        """보유 종목의 매수 진입 전략을 조회하여 해당 전략 인스턴스 반환"""
+        strat_name = self.position_tracker.get_position_strategy(code)
+        if not strat_name:
+            try:
+                proposals = self.load_proposals()
+                for b in proposals.get("buy_proposals", []):
+                    if b.get("code") == code:
+                        strat_name = b.get("strategy_name", b.get("strategy"))
+                        if strat_name:
+                            self.position_tracker.update_position_state(
+                                code=code,
+                                current_price=float(b.get("current_price", 0)),
+                                avg_buy_price=float(b.get("current_price", 0)),
+                                strategy=strat_name
+                            )
+                            break
+            except Exception:
+                pass
+
+        if strat_name and ("&" in strat_name or strat_name == "multi"):
+            strat_name = "rebound" if "rebound" in strat_name else "momentum"
+
+        if strat_name:
+            s_inst = get_strategy(strat_name)
+            if s_inst:
+                return s_inst
+
+        return self.strategy
 
     def _clear_position_state(self, code: str) -> None:
         self.position_tracker.clear_position_state(code)
@@ -112,18 +150,52 @@ class StockScreener:
         current_date: Optional[str] = None,
         use_file_cooldown: bool = False
     ) -> Optional[Dict[str, Any]]:
-        """기술적 보조지표 DataFrame을 바탕으로 매수 신호 평가"""
+        """기술적 보조지표 DataFrame을 바탕으로 활성화된 모든 전략 매수 신호 평가"""
         in_cooldown = self._is_in_cooldown(code, current_date=current_date, use_file_cooldown=use_file_cooldown)
-        return self.strategy.evaluate_buy(
-            df=df,
-            code=code,
-            name=name,
-            held_codes=held_codes,
-            budget=budget,
-            market_regime=market_regime,
-            settings=config.CURRENT_SETTINGS,
-            is_in_cooldown=in_cooldown
-        )
+        active_strats = getattr(self, "strategies", None) or get_active_strategies()
+
+        results = []
+        for strat in active_strats:
+            try:
+                res = strat.evaluate_buy(
+                    df=df,
+                    code=code,
+                    name=name,
+                    held_codes=held_codes,
+                    budget=budget,
+                    market_regime=market_regime,
+                    settings=config.CURRENT_SETTINGS,
+                    is_in_cooldown=in_cooldown
+                )
+                if res:
+                    res["strategy"] = strat.name
+                    if "strategy_name" not in res:
+                        res["strategy_name"] = strat.name
+                    if "strategy_display_name" not in res:
+                        res["strategy_display_name"] = strat.display_name
+                    results.append(res)
+            except Exception as e:
+                self.logger.warning(f"[{name}({code})] 전략 '{strat.name}' 평가 중 예외: {e}")
+
+        if not results:
+            return None
+
+        if len(results) == 1:
+            return results[0]
+
+        # 복수 전략에서 동시 추천된 경우 (슈퍼 시그널)
+        # 가장 높은 점수를 기본으로 취하고 보너스 가산점 및 사유 병합
+        results.sort(key=lambda x: x.get("score", 0), reverse=True)
+        best = results[0]
+        combined_names = " & ".join(r.get("strategy_display_name", r.get("strategy_name")) for r in results)
+        
+        # 보너스 점수 +10점 부여
+        best["score"] = best.get("score", 0) + 10
+        best["strategy"] = best.get("strategy", best.get("strategy_name", "multi"))
+        best["strategy_display_name"] = combined_names
+        best["is_multi_strategy"] = True
+        best["reasons"] = [f"🌟 [슈퍼 시그널] {combined_names} 복수 알고리즘 동시 포착 (+10점)"] + best.get("reasons", [])
+        return best
 
     def evaluate_buy_signals(
         self,
@@ -137,29 +209,28 @@ class StockScreener:
         candles = self.api.get_daily_chart(code, count=65)
 
         realtime = self.api.get_stock_price(code)
+        d250_hgpr = float(realtime.get("d250_hgpr", 0.0))
+
         if realtime.get("rt_cd") == "0" and realtime.get("price", 0) > 0:
             today_str = today().strftime("%Y%m%d")
+            candle_entry = {
+                "date": today_str,
+                "close": realtime["price"],
+                "open": realtime.get("stck_oprc", realtime["price"]),
+                "high": realtime.get("stck_hgpr", realtime["price"]),
+                "low": realtime.get("stck_lwpr", realtime["price"]),
+                "volume": realtime.get("acml_vol", 0),
+                "change_rate": realtime.get("prdy_ctrt", 0.0),
+                "d250_hgpr": d250_hgpr
+            }
             if not candles or candles[-1].get("date") != today_str:
-                candles.append({
-                    "date": today_str,
-                    "close": realtime["price"],
-                    "open": realtime.get("stck_oprc", realtime["price"]),
-                    "high": realtime.get("stck_hgpr", realtime["price"]),
-                    "low": realtime.get("stck_lwpr", realtime["price"]),
-                    "volume": realtime.get("acml_vol", 0),
-                    "change_rate": realtime.get("prdy_ctrt", 0.0)
-                })
+                candles.append(candle_entry)
             else:
-                candles[-1].update({
-                    "close": realtime["price"],
-                    "open": realtime.get("stck_oprc", candles[-1].get("open", realtime["price"])),
-                    "high": realtime.get("stck_hgpr", candles[-1].get("high", realtime["price"])),
-                    "low": realtime.get("stck_lwpr", candles[-1].get("low", realtime["price"])),
-                    "volume": realtime.get("acml_vol", candles[-1].get("volume", 0)),
-                    "change_rate": realtime.get("prdy_ctrt", candles[-1].get("change_rate", 0.0))
-                })
+                candles[-1].update(candle_entry)
 
         df = self.calculate_technical_indicators(candles, is_intraday=is_intraday)
+        if df is not None and not df.empty and d250_hgpr > 0:
+            df["d250_hgpr"] = d250_hgpr
 
         market_regime = None
         if config.CURRENT_SETTINGS.get("market_regime_filter_enabled", True):
@@ -189,8 +260,10 @@ class StockScreener:
         holding_days: int = 0,
         market_regime: Optional[Dict[str, Any]] = None
     ) -> Optional[Dict[str, Any]]:
-        """보유 종목의 수익률 및 지표 기반 매도 신호 평가"""
-        res = self.strategy.evaluate_sell(
+        """보유 종목의 진입 전략 알고리즘에 따른 매도 신호 평가"""
+        code = holding.get("code")
+        strat = self._get_holding_strategy(code)
+        res = strat.evaluate_sell(
             holding=holding,
             df=df,
             is_recently_bought=is_recently_bought,
@@ -202,13 +275,16 @@ class StockScreener:
             holding_days=holding_days,
             market_regime=market_regime
         )
-        if res and res.get("is_urgent") and "손절" in res.get("sell_type", ""):
-            # 손절 발생 시 쿨다운 등록
-            self._register_stop_loss_cooldown(
-                code=holding.get("code"),
-                stop_date=current_date,
-                use_file_cooldown=use_file_cooldown
-            )
+        if res:
+            res["strategy_name"] = strat.name
+            res["strategy_display_name"] = strat.display_name
+            if res.get("is_urgent") and "손절" in res.get("sell_type", ""):
+                # 손절 발생 시 쿨다운 등록
+                self._register_stop_loss_cooldown(
+                    code=code,
+                    stop_date=current_date,
+                    use_file_cooldown=use_file_cooldown
+                )
         return res
 
     def _is_recently_bought(self, code: str, days: int = 2) -> bool:
@@ -511,6 +587,15 @@ class StockScreener:
                     order_type="01"
                 )
                 executed.append({"stock": item, "response": res})
+                if res.get("rt_cd") == "0":
+                    self.position_tracker.record_buy(
+                        code=code,
+                        name=name,
+                        price=float(item.get("current_price", 0.0)),
+                        qty=qty,
+                        strategy=item.get("strategy_name", item.get("strategy", "momentum")),
+                        strategy_display_name=item.get("strategy_display_name")
+                    )
                 if not item.get("is_additional_buy"):
                     current_holding_count += 1
                     daily_new_buy_count += 1
@@ -560,7 +645,15 @@ class StockScreener:
             self.logger.warning(f"스크리닝 요약 알림 전송 실패: {e}")
 
     def save_proposals(self, data: dict) -> bool:
-        return atomic_save_json(PROPOSALS_FILE, data)
+        ok = atomic_save_json(PROPOSALS_FILE, data)
+        try:
+            from google_sheet_manager import get_sheet_manager
+            sheet_mgr = get_sheet_manager()
+            if sheet_mgr.is_connected:
+                sheet_mgr.sync_proposals_to_sheet(data)
+        except Exception as e:
+            self.logger.debug(f"Google Sheet Proposals 동기화 생략: {e}")
+        return ok
 
     @staticmethod
     def load_proposals() -> Dict[str, Any]:

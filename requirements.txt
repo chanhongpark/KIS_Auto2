@@ -8,3 +8,5 @@ python-dotenv>=1.0.0
 plotly>=5.18.0
 ta>=0.11.0
 finance-datareader>=0.9.0
+gspread>=5.10.0
+google-auth>=2.20.0

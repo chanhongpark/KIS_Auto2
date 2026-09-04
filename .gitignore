@@ -11,6 +11,9 @@ env/
 .env.local
 token_*.json
 token_kis_*.json
+*service_account*.json
+gcp_*.json
+kis-auto-trader-*.json
 
 # Logs & Runtime Cache
 *.log

@@ -49,10 +49,17 @@ def render_overview_tab(api, screener, summary, holdings, proposals, holding_cod
         else:
             for b in buy_list[:3]:
                 buy_tag = "🔄 추가매수" if b.get("code") in holding_codes else "🆕 신규매수"
-                t_sc = b.get("trend_score", 0)
-                s_sc = b.get("supply_score", 0)
-                m_sc = b.get("momentum_score", 0)
-                st.markdown(f"**{buy_tag} [{b['name']} ({b['code']})]** 현재가: `{b['current_price']:,.0f}원` | **총점: `{b['score']}점`** (추세 {t_sc}/수급 {s_sc}/모멘텀 {m_sc})")
+                strat_tag = f" `[{b.get('strategy_display_name', '')}]`" if b.get('strategy_display_name') else ""
+                t_sc = b.get("trend_score")
+                s_sc = b.get("supply_score")
+                m_sc = b.get("momentum_score")
+                score_details = []
+                if t_sc is not None: score_details.append(f"추세 {t_sc}")
+                if s_sc is not None: score_details.append(f"수급 {s_sc}")
+                if m_sc is not None: score_details.append(f"모멘텀 {m_sc}")
+                if b.get("w52_drop_rate") is not None: score_details.append(f"낙폭 {b['w52_drop_rate']:+.1f}%")
+                detail_str = f" ({'/'.join(score_details)})" if score_details else ""
+                st.markdown(f"**{buy_tag} [{b['name']} ({b['code']})]{strat_tag}** 현재가: `{b['current_price']:,.0f}원` | **총점: `{b['score']}점`**{detail_str}")
                 st.caption(f"⚡ 보정 거래량: {b.get('adjusted_volume', 0):,.0f}주 (20일평균 대비 {b.get('vol_ratio', 0)}%)")
                 st.caption(" • ".join(b.get("reasons", [])))
 
@@ -73,43 +80,100 @@ def render_overview_tab(api, screener, summary, holdings, proposals, holding_cod
         st.info("현재 계좌에 보유 중인 주식이 없습니다.")
     else:
         # 수익률 아이콘 포함 HTML 테이블 렌더링 (플러스=빨강 ▲, 마이너스=파랑 ▼)
-        # st.components.v1.html()을 사용하여 HTML을 정확히 렌더링 (st.markdown은 HTML을 이스케이프함)
+        # st.components.v1.html() 내 다크모드 글자색(#f8fafc, #38bdf8) 명시 적용
+        positions_state = screener.position_tracker.load_positions_state() if hasattr(screener, "position_tracker") else {}
         html_rows = []
         for h in holdings:
             pr = float(h.get("profit_rate", 0))
             if pr > 0:
-                icon_html = '<span style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;font-size:0.75rem;font-weight:800;margin-right:6px;vertical-align:middle;background:rgba(239,68,68,0.2);color:#ef4444;border:1px solid rgba(239,68,68,0.5);box-shadow:0 0 8px rgba(239,68,68,0.3);">▲</span>'
+                icon_html = '<span style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;font-size:0.75rem;font-weight:800;color:#ff4d4f;border:1px solid #ff4d4f;">▲</span>'
+                pr_color = "#ff4d4f"
             elif pr < 0:
-                icon_html = '<span style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;font-size:0.75rem;font-weight:800;margin-right:6px;vertical-align:middle;background:rgba(59,130,246,0.2);color:#3b82f6;border:1px solid rgba(59,130,246,0.5);box-shadow:0 0 8px rgba(59,130,246,0.3);">▼</span>'
+                icon_html = '<span style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;font-size:0.75rem;font-weight:800;color:#38bdf8;border:1px solid #38bdf8;">▼</span>'
+                pr_color = "#38bdf8"
             else:
-                icon_html = '<span style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;font-size:0.75rem;font-weight:800;margin-right:6px;vertical-align:middle;background:rgba(148,163,184,0.2);color:#94a3b8;border:1px solid rgba(148,163,184,0.5);">•</span>'
+                icon_html = '<span style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;font-size:0.75rem;font-weight:800;color:#94a3b8;border:1px solid #64748b;">•</span>'
+                pr_color = "#94a3b8"
+
+            pnl = float(h.get('profit_loss', 0))
+            pnl_color = "#ff4d4f" if pnl > 0 else "#38bdf8" if pnl < 0 else "#94a3b8"
+
+            pos_info = positions_state.get(h["code"], {})
+            strat = pos_info.get("strategy", "momentum")
+            if "rebound" in strat:
+                strat_badge = '<span style="background:#1e3a8a;color:#93c5fd;padding:2px 6px;border-radius:4px;font-size:0.75rem;font-weight:600;">📉 52주 반등</span>'
+            elif "multi" in strat or "&" in strat:
+                strat_badge = '<span style="background:#581c87;color:#d8b4fe;padding:2px 6px;border-radius:4px;font-size:0.75rem;font-weight:600;">🌟 슈퍼시그널</span>'
+            else:
+                strat_badge = '<span style="background:#064e3b;color:#6ee7b7;padding:2px 6px;border-radius:4px;font-size:0.75rem;font-weight:600;">🚀 모멘텀</span>'
+
             html_rows.append(f"""
-                <tr>
-                    <td style="text-align:center;padding:8px 10px;color:#e2e8f0;border-bottom:1px solid #1e293b;">{icon_html}</td>
-                    <td style="padding:8px 10px;color:#f8fafc;font-weight:600;border-bottom:1px solid #1e293b;">{h['name']}</td>
-                    <td style="padding:8px 10px;color:#94a3b8;border-bottom:1px solid #1e293b;">{h['code']}</td>
-                    <td style="text-align:right;padding:8px 10px;color:#e2e8f0;border-bottom:1px solid #1e293b;">{h['quantity']:,}</td>
-                    <td style="text-align:right;padding:8px 10px;color:#e2e8f0;border-bottom:1px solid #1e293b;">{h['avg_buy_price']:,.0f}</td>
-                    <td style="text-align:right;padding:8px 10px;color:#e2e8f0;border-bottom:1px solid #1e293b;">{h['current_price']:,.0f}</td>
-                    <td style="text-align:right;padding:8px 10px;color:{'#f87171' if pr > 0 else '#60a5fa' if pr < 0 else '#94a3b8'};font-weight:700;border-bottom:1px solid #1e293b;">{pr:+.2f}%</td>
-                    <td style="text-align:right;padding:8px 10px;color:{'#f87171' if h.get('profit_loss', 0) > 0 else '#60a5fa' if h.get('profit_loss', 0) < 0 else '#94a3b8'};font-weight:700;border-bottom:1px solid #1e293b;">{h.get('profit_loss', 0):+,.0f}</td>
-                    <td style="text-align:right;padding:8px 10px;color:#e2e8f0;border-bottom:1px solid #1e293b;">{h.get('eval_amount', 0):,.0f}</td>
+                <tr style="border-bottom:1px solid #1e293b;">
+                    <td style="text-align:center;padding:10px 8px;">{icon_html}</td>
+                    <td style="padding:10px 8px;font-weight:700;color:#38bdf8;">{h['name']}</td>
+                    <td style="padding:10px 8px;color:#94a3b8;font-size:0.8rem;">{h['code']}</td>
+                    <td style="text-align:center;padding:10px 8px;">{strat_badge}</td>
+                    <td style="text-align:right;padding:10px 8px;color:#f8fafc;font-weight:600;">{h['quantity']:,}주</td>
+                    <td style="text-align:right;padding:10px 8px;color:#cbd5e1;">{h['avg_buy_price']:,.0f}원</td>
+                    <td style="text-align:right;padding:10px 8px;color:#f8fafc;font-weight:600;">{h['current_price']:,.0f}원</td>
+                    <td style="text-align:right;padding:10px 8px;color:{pr_color};font-weight:700;">{pr:+.2f}%</td>
+                    <td style="text-align:right;padding:10px 8px;color:{pnl_color};font-weight:700;">{pnl:+,.0f}원</td>
+                    <td style="text-align:right;padding:10px 8px;color:#f8fafc;font-weight:600;">{h.get('eval_amount', 0):,.0f}원</td>
                 </tr>
             """)
         html_table = f"""
-        <div style="background:#0f172a;border:1px solid #334155;border-radius:12px;padding:16px;margin-bottom:10px;box-shadow:0 4px 20px rgba(0,0,0,0.3);">
-        <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <meta charset="utf-8">
+        <style>
+            body {{
+                margin: 0;
+                padding: 0;
+                background-color: transparent;
+                font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Segoe UI", Roboto, sans-serif;
+                color: #f8fafc;
+            }}
+            .holdings-container {{
+                background: #0b0f19;
+                border: 1px solid #1e293b;
+                border-radius: 12px;
+                padding: 12px;
+                box-sizing: border-box;
+            }}
+            table {{
+                width: 100%;
+                border-collapse: collapse;
+                font-size: 0.88rem;
+            }}
+            th {{
+                background: #1e293b;
+                color: #f1f5f9;
+                font-weight: 700;
+                padding: 10px 8px;
+                border-bottom: 2px solid #334155;
+                white-space: nowrap;
+            }}
+            tr:hover {{
+                background-color: rgba(30, 41, 59, 0.4);
+            }}
+        </style>
+        </head>
+        <body>
+        <div class="holdings-container">
+        <table>
             <thead>
                 <tr>
-                    <th style="background:#1e293b;color:#f8fafc;font-weight:700;padding:10px 10px;text-align:center;border-bottom:2px solid #475569;white-space:nowrap;">수익</th>
-                    <th style="background:#1e293b;color:#f8fafc;font-weight:700;padding:10px 10px;text-align:left;border-bottom:2px solid #475569;white-space:nowrap;">종목명</th>
-                    <th style="background:#1e293b;color:#f8fafc;font-weight:700;padding:10px 10px;text-align:left;border-bottom:2px solid #475569;white-space:nowrap;">코드</th>
-                    <th style="background:#1e293b;color:#f8fafc;font-weight:700;padding:10px 10px;text-align:right;border-bottom:2px solid #475569;white-space:nowrap;">보유수량</th>
-                    <th style="background:#1e293b;color:#f8fafc;font-weight:700;padding:10px 10px;text-align:right;border-bottom:2px solid #475569;white-space:nowrap;">매입평균가</th>
-                    <th style="background:#1e293b;color:#f8fafc;font-weight:700;padding:10px 10px;text-align:right;border-bottom:2px solid #475569;white-space:nowrap;">현재가</th>
-                    <th style="background:#1e293b;color:#f8fafc;font-weight:700;padding:10px 10px;text-align:right;border-bottom:2px solid #475569;white-space:nowrap;">수익률(%)</th>
-                    <th style="background:#1e293b;color:#f8fafc;font-weight:700;padding:10px 10px;text-align:right;border-bottom:2px solid #475569;white-space:nowrap;">평가손익(원)</th>
-                    <th style="background:#1e293b;color:#f8fafc;font-weight:700;padding:10px 10px;text-align:right;border-bottom:2px solid #475569;white-space:nowrap;">평가금액(원)</th>
+                    <th style="text-align:center;">수익</th>
+                    <th style="text-align:left;">종목명</th>
+                    <th style="text-align:left;">코드</th>
+                    <th style="text-align:center;">진입전략</th>
+                    <th style="text-align:right;">보유수량</th>
+                    <th style="text-align:right;">매입평균가</th>
+                    <th style="text-align:right;">현재가</th>
+                    <th style="text-align:right;">수익률(%)</th>
+                    <th style="text-align:right;">평가손익(원)</th>
+                    <th style="text-align:right;">평가금액(원)</th>
                 </tr>
             </thead>
             <tbody>
@@ -117,8 +181,10 @@ def render_overview_tab(api, screener, summary, holdings, proposals, holding_cod
             </tbody>
         </table>
         </div>
+        </body>
+        </html>
         """
-        st.components.v1.html(html_table, height=80 + len(holdings) * 40, scrolling=True)
+        st.components.v1.html(html_table, height=85 + len(holdings) * 44, scrolling=True)
 
         holding_options = [f"{h['name']} ({h['code']}) | 평단가: {h['avg_buy_price']:,.0f}원 | 수익률: {h['profit_rate']:+.2f}%" for h in holdings]
         selected_idx = st.selectbox(
@@ -292,7 +358,25 @@ def render_risk_tab(api, screener, holdings, proposals, realtime_detection_fragm
         holdings_df["수익률(%)"] = holdings_df["수익률(%)"].apply(lambda x: f"{x:+.2f}%")
         holdings_df["평가손익(원)"] = holdings_df["평가손익(원)"].apply(lambda x: f"{x:+,.0f}")
         holdings_df["평가금액(원)"] = holdings_df["평가금액(원)"].apply(lambda x: f"{x:,.0f}")
-        st.dataframe(holdings_df, width="stretch", hide_index=True)
+
+        # 손익/손실 여부에 따른 동적 글자색 스타일링 (수익: 선명한 빨강, 손실: 선명한 파랑, 배경색 없음)
+        def _style_profit_loss(row):
+            styles = [''] * len(row)
+            p_val = str(row.get("수익률(%)", "")).strip()
+            if p_val.startswith("+"):
+                style_str = "color: #ff4d4f; font-weight: 700;"
+            elif p_val.startswith("-"):
+                style_str = "color: #38bdf8; font-weight: 700;"
+            else:
+                style_str = "color: #94a3b8;"
+
+            for col_name in ["수익", "수익률(%)", "평가손익(원)"]:
+                if col_name in row.index:
+                    styles[row.index.get_loc(col_name)] = style_str
+            return styles
+
+        styled_holdings = holdings_df.style.apply(_style_profit_loss, axis=1)
+        st.dataframe(styled_holdings, width="stretch", hide_index=True)
 
 def render_execution_tab(api):
     """주문/체결 내역 탭 (Execution)"""
@@ -398,7 +482,23 @@ def render_performance_tab(api):
             pbs_df["매수금액(원)"] = pbs_df["매수금액(원)"].apply(lambda x: f"{x:,.0f}")
             pbs_df["매도금액(원)"] = pbs_df["매도금액(원)"].apply(lambda x: f"{x:,.0f}")
             pbs_df["실현손익(원)"] = pbs_df["실현손익(원)"].apply(lambda x: f"{x:+,.0f}")
-            st.dataframe(pbs_df, width="stretch")
+
+            def _style_realized_profit(row):
+                styles = [''] * len(row)
+                p_val = str(row.get("실현손익(원)", "")).strip()
+                if p_val.startswith("+"):
+                    style_str = "color: #ff4d4f; font-weight: 700;"
+                elif p_val.startswith("-"):
+                    style_str = "color: #38bdf8; font-weight: 700;"
+                else:
+                    style_str = "color: #94a3b8;"
+
+                if "실현손익(원)" in row.index:
+                    styles[row.index.get_loc("실현손익(원)")] = style_str
+                return styles
+
+            styled_pbs = pbs_df.style.apply(_style_realized_profit, axis=1)
+            st.dataframe(styled_pbs, width="stretch", hide_index=True)
 
             fig_profit = go.Figure(go.Bar(
                 x=[v["name"] for v in sold_stocks.values()],

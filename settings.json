@@ -1,6 +1,10 @@
 {
   "mock_trading": false,
   "regime_preset_mode": "VOLATILE",
+  "active_strategies": [
+    "momentum",
+    "rebound"
+  ],
   "strategy_name": "momentum",
   "strategy_settings": {
     "momentum": {
@@ -24,6 +28,9 @@
       "momentum_bb_lower_rebound_score": 15,
       "momentum_rsi_low_rebound_score": 15,
       "momentum_rsi_momentum_score": 10
+    },
+    "rebound": {
+      "rebound_w52_drop_threshold": -0.35
     }
   },
   "target_profit_rate": 0.05,

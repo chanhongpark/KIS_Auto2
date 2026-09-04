@@ -342,10 +342,39 @@ def render_interactive_stock_chart(api_client, screener_engine, code: str, name:
             fig.update_layout(
                 height=560,
                 template="plotly_dark",
+                paper_bgcolor="#0b0f19",
+                plot_bgcolor="#0f172a",
+                font=dict(color="#f1f5f9", family="Pretendard, -apple-system, sans-serif"),
                 xaxis_rangeslider_visible=False,
                 margin=dict(l=20, r=20, t=40, b=20),
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                legend=dict(
+                    orientation="h",
+                    yanchor="bottom",
+                    y=1.02,
+                    xanchor="right",
+                    x=1,
+                    font=dict(color="#f8fafc", size=11)
+                )
             )
+
+            # 서브플롯 타이틀 글자색을 밝은 화이트(#f8fafc)로 강조
+            for ann in fig["layout"]["annotations"]:
+                ann["font"] = dict(color="#f8fafc", size=13, family="Pretendard, -apple-system, sans-serif")
+
+            # X축/Y축 눈금 및 그리드 선명도 개선
+            fig.update_xaxes(
+                showgrid=True,
+                gridcolor="#1e293b",
+                tickfont=dict(color="#cbd5e1", size=10),
+                linecolor="#334155"
+            )
+            fig.update_yaxes(
+                showgrid=True,
+                gridcolor="#1e293b",
+                tickfont=dict(color="#cbd5e1", size=10),
+                linecolor="#334155"
+            )
+
             st.plotly_chart(fig, width="stretch")
 
             latest = df_tech.iloc[-1]

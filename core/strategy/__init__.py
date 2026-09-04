@@ -80,8 +80,30 @@ def get_strategy_specific_settings_keys(name: str) -> Set[str]:
     return cls.get_strategy_settings_keys()
 
 
+def get_active_strategies(names: Optional[List[str]] = None) -> List[BaseStrategy]:
+    """활성화된 전략 인스턴스 목록 반환 (다중 전략 지원)"""
+    import config
+    if names is None:
+        names = config.CURRENT_SETTINGS.get("active_strategies")
+        if not names:
+            single = config.CURRENT_SETTINGS.get("strategy_name", get_default_strategy_name())
+            names = [single] if single else [get_default_strategy_name()]
+
+    strategies = []
+    for n in names:
+        if n in _registry:
+            strategies.append(_registry[n]())
+        else:
+            logger.warning(f"등록되지 않은 전략 '{n}' 건너뜀")
+
+    if not strategies:
+        strategies = [_registry[get_default_strategy_name()]()]
+    return strategies
+
+
 # 전략 모듈 자동 로드 (등록을 위해 import)
 from core.strategy import momentum  # noqa: E402,F401
+from core.strategy import rebound   # noqa: E402,F401
 
 # =============================================================================
 # 하위 호환성을 위한 래퍼 함수 (기존 core.strategy 모듈 함수 시그니처 유지)

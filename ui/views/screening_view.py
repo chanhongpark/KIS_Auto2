@@ -34,15 +34,19 @@ def render_screener(api, screener, proposals, holding_codes):
                     st.markdown(f"### {buy_tag} {item['name']} <small style='color:#64748b'>({item['code']})</small>", unsafe_allow_html=True)
                     st.write(f"**현재가:** `{item['current_price']:,.0f}원` ({item['change_rate']:+.2f}%)")
                     
-                    t_sc = item.get("trend_score", 0)
-                    s_sc = item.get("supply_score", 0)
-                    m_sc = item.get("momentum_score", 0)
-                    st.markdown(f"""
-                        <span class="score-badge">총점 {item['score']}점</span>
-                        <span class="score-badge">추세 {t_sc}/30</span>
-                        <span class="score-badge">수급 {s_sc}/25</span>
-                        <span class="score-badge">모멘텀 {m_sc}/25</span>
-                    """, unsafe_allow_html=True)
+                    strat_disp = item.get("strategy_display_name", item.get("strategy", ""))
+                    badges = [f"<span class='score-badge'>총점 {item['score']}점</span>"]
+                    if strat_disp:
+                        badges.append(f"<span class='score-badge' style='background:#1e293b; border:1px solid #3b82f6; color:#60a5fa;'>🎯 {strat_disp}</span>")
+                    if "trend_score" in item:
+                        badges.append(f"<span class='score-badge'>추세 {item['trend_score']}/30</span>")
+                    if "supply_score" in item:
+                        badges.append(f"<span class='score-badge'>수급 {item['supply_score']}/25</span>")
+                    if "momentum_score" in item:
+                        badges.append(f"<span class='score-badge'>모멘텀 {item['momentum_score']}/25</span>")
+                    if item.get("w52_drop_rate") is not None:
+                        badges.append(f"<span class='score-badge' style='color:#f87171;'>52주고가대비 {item['w52_drop_rate']:+.1f}%</span>")
+                    st.markdown(" ".join(badges), unsafe_allow_html=True)
                     st.caption(f"⚡ 보정 거래량: {item.get('adjusted_volume', 0):,.0f}주 (전일20일평균 대비 {item.get('vol_ratio', 0)}%)")
                     reasons_text = " • ".join(item.get("reasons", []))
                     st.caption(reasons_text)
@@ -116,6 +120,18 @@ def render_screener(api, screener, proposals, holding_codes):
                                 ord_dv=ord_dv
                             )
                             if res.get("rt_cd") == "0":
+                                try:
+                                    screener.position_tracker.record_buy(
+                                        code=item["code"],
+                                        name=item["name"],
+                                        price=float(target_price),
+                                        qty=order_qty,
+                                        strategy=item.get("strategy_name", item.get("strategy", "momentum")),
+                                        strategy_display_name=item.get("strategy_display_name")
+                                    )
+                                except Exception as e:
+                                    screener.logger.warning(f"포지션 상태 기록 예외: {e}")
+
                                 st.success(f"✅ 주문 완료 (No. {res.get('order_no')})")
                                 notifier.send_buy_success(
                                     name=item["name"],

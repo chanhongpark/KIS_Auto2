@@ -7,7 +7,7 @@ import os
 import json
 import logging
 import threading
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 from core.storage import safe_load_json, atomic_save_json
 
 # 로깅 기본 설정 (KST 기준)
@@ -62,6 +62,12 @@ URL_BASE_REAL = "https://openapi.koreainvestment.com:9443"
 
 # 설정 파일 경로
 SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "settings.json")
+
+# Google Sheets 동기화 설정
+GOOGLE_SHEET_ENABLED = os.getenv("GOOGLE_SHEET_ENABLED", "true").lower() == "true"
+GOOGLE_SHEET_NAME = os.getenv("GOOGLE_SHEET_NAME", "KIS_Auto2_매매일지")
+GOOGLE_SHEET_KEY = os.getenv("GOOGLE_SHEET_KEY", "")  # 구글 시트 ID/Key
+GCP_SERVICE_ACCOUNT_JSON = os.getenv("GCP_SERVICE_ACCOUNT_JSON", "kis-auto-trader-1024280eca64.json")
 
 # ==============================================================================
 # 시장 국면별 3대 프리셋 정의 (Market Regime Presets)
@@ -121,8 +127,9 @@ MARKET_REGIME_PRESETS: Dict[str, Dict[str, Any]] = {
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "mock_trading": True,                    # 모의투자 여부 (True: 모의, False: 실전)
     "regime_preset_mode": "AUTO",            # 국면 모드: 'AUTO'(지수 자동감지), 'BULL', 'VOLATILE', 'BEAR', 'CUSTOM'
-    "strategy_name": "momentum",             # 매수/매도 전략 이름 (플러그인 전략)
-    "strategy_settings": {},                 # 전략별 고유 설정 (예: {"momentum": {"score_cap_trend": 40, ...}})
+    "active_strategies": ["momentum"],       # 활성화된 전략 목록 (다중 선택 지원)
+    "strategy_name": "momentum",             # 단일 전략 이름 (하위 호환 유지)
+    "strategy_settings": {},                 # 전략별 고유 설정 (예: {"momentum": {...}, "rebound": {...}})
     "target_profit_rate": 0.08,             # 목표 익절 수익률 (+8.0%)
     "stop_loss_rate": -0.05,                # 손절 수익률 (-5.0%)
     "max_buy_budget_per_stock": 500000,     # 1종목당 최대 매수 한도 (원)
@@ -299,6 +306,24 @@ def load_settings() -> Dict[str, Any]:
 
         merged = DEFAULT_SETTINGS.copy()
         merged.update(loaded)
+
+        if "active_strategies" not in merged or not merged["active_strategies"]:
+            single = merged.get("strategy_name", "momentum")
+            merged["active_strategies"] = [single] if single else ["momentum"]
+
+        # Google Sheets 'Settings' 탭에서 최신 설정값 오버라이드
+        try:
+            import sys
+            if "google_sheet_manager" in sys.modules:
+                from google_sheet_manager import get_sheet_manager
+                sheet_mgr = get_sheet_manager()
+                if sheet_mgr.is_connected:
+                    sheet_settings = sheet_mgr.read_settings_from_sheet()
+                    if sheet_settings:
+                        merged.update(sheet_settings)
+        except Exception as e:
+            logger.debug(f"Google Sheet 설정값 로드 생략: {e}")
+
         _cached_settings = merged
         return _cached_settings
 
@@ -309,14 +334,20 @@ def save_settings(new_settings: Dict[str, Any]) -> bool:
         merged.update(new_settings)
         ok = atomic_save_json(SETTINGS_FILE, merged)
         if ok:
-            # 기존 CURRENT_SETTINGS dict를 in-place로 갱신하여,
-            # 코드베이스 전반에서 참조 중인 config.CURRENT_SETTINGS가
-            # 항상 최신 저장값을 반영하도록 한다.
-            # (기존에는 _cached_settings를 새 dict로 교체만 하여,
-            #  import 시점에 고정된 CURRENT_SETTINGS는 이전 값을 유지하는 버그가 있었음)
+            # 기존 CURRENT_SETTINGS dict를 in-place로 갱신
             CURRENT_SETTINGS.clear()
             CURRENT_SETTINGS.update(merged)
             _cached_settings = CURRENT_SETTINGS
+
+            # Google Sheets 'Settings' 탭에 동기화
+            try:
+                from google_sheet_manager import get_sheet_manager
+                sheet_mgr = get_sheet_manager()
+                if sheet_mgr.is_connected:
+                    sheet_mgr.sync_settings_to_sheet(merged)
+            except Exception as e:
+                logger.debug(f"Google Sheet 설정값 저장 동기화 생략: {e}")
+
         return ok
 
 def get_effective_settings_for_regime(detected_regime: str, base_settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -409,6 +440,31 @@ def save_strategy_settings(
     return save_settings(current)
 
 
+def save_multiple_strategy_settings(
+    active_strategies: List[str],
+    strategies_settings_map: Dict[str, Dict[str, Any]],
+    global_settings: Optional[Dict[str, Any]] = None
+) -> bool:
+    """
+    여러 활성 전략 목록과 각 전략별 고유 설정 및 전역 설정을 일괄 저장.
+    """
+    current = load_settings().copy()
+    strategy_map = dict(current.get("strategy_settings", {}) or {})
+    for s_name, s_cfg in strategies_settings_map.items():
+        if s_name not in strategy_map:
+            strategy_map[s_name] = {}
+        strategy_map[s_name].update(s_cfg)
+
+    merged = current.copy()
+    if global_settings is not None:
+        merged.update(global_settings)
+    merged["active_strategies"] = list(active_strategies)
+    if active_strategies:
+        merged["strategy_name"] = active_strategies[0]  # 하위 호환성 유지
+    merged["strategy_settings"] = strategy_map
+    return save_settings(merged)
+
+
 CURRENT_SETTINGS = load_settings()
 
 def get_setting(key: str, default: Any = None) -> Any:
@@ -416,3 +472,24 @@ def get_setting(key: str, default: Any = None) -> Any:
 
 def get_url_base() -> str:
     return URL_BASE_MOCK if CURRENT_SETTINGS.get("mock_trading", True) else URL_BASE_REAL
+
+def sync_settings_from_google_sheet() -> bool:
+    """구글 시트 'Settings' 탭의 최신 설정을 읽어와 로컬 캐시 및 CURRENT_SETTINGS에 최우선 반영"""
+    try:
+        from google_sheet_manager import get_sheet_manager
+        sheet_mgr = get_sheet_manager()
+        if sheet_mgr.is_connected:
+            sheet_settings = sheet_mgr.read_settings_from_sheet()
+            if sheet_settings:
+                with _settings_lock:
+                    CURRENT_SETTINGS.update(sheet_settings)
+                    if _cached_settings is not None:
+                        _cached_settings.update(sheet_settings)
+                logger.info(f"📊 구글 시트 'Settings'에서 최신 설정값 {len(sheet_settings)}건 반영 완료 (Sheet 최우선 적용)")
+                return True
+    except Exception as e:
+        logger.debug(f"구글 시트 설정 동기화 생략: {e}")
+    return False
+
+# 모듈 로드 완료 후 구글 시트 우선 동기화 1회 실행
+sync_settings_from_google_sheet()
