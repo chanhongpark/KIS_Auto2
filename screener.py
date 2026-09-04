@@ -186,7 +186,8 @@ class StockScreener:
         use_file_cooldown: bool = False,
         is_partial_sold: bool = False,
         highest_price: Optional[float] = None,
-        holding_days: int = 0
+        holding_days: int = 0,
+        market_regime: Optional[Dict[str, Any]] = None
     ) -> Optional[Dict[str, Any]]:
         """보유 종목의 수익률 및 지표 기반 매도 신호 평가"""
         res = self.strategy.evaluate_sell(
@@ -198,7 +199,8 @@ class StockScreener:
             settings=config.CURRENT_SETTINGS,
             is_partial_sold=is_partial_sold,
             highest_price=highest_price,
-            holding_days=holding_days
+            holding_days=holding_days,
+            market_regime=market_regime
         )
         if res and res.get("is_urgent") and "손절" in res.get("sell_type", ""):
             # 손절 발생 시 쿨다운 등록
@@ -226,10 +228,21 @@ class StockScreener:
         """라이브 환경에서 보유 종목 매도 분석"""
         code = holding.get("code")
         profit_rate = float(holding.get("profit_rate", 0.0))
-        target_profit_rate = float(config.CURRENT_SETTINGS.get("target_profit_rate", 0.05)) * 100
-        stop_loss_rate = float(config.CURRENT_SETTINGS.get("stop_loss_rate", -0.03)) * 100
         current_price = float(holding.get("current_price", 0.0))
         avg_buy_price = float(holding.get("avg_buy_price", 0.0))
+
+        # 시장 국면 감지 (AUTO 모드에서 프리셋 자동 전환을 위해 필요)
+        market_regime = None
+        if config.CURRENT_SETTINGS.get("market_regime_filter_enabled", True):
+            market_regime = self.get_market_regime(market=holding.get("market", "KOSPI"))
+
+        # 유효 설정 (시장 국면 프리셋 적용)
+        regime = (market_regime or {}).get("regime", "BULL")
+        eff_settings = config.get_effective_strategy_settings(self.strategy.name, config.CURRENT_SETTINGS)
+        eff_settings = config.get_effective_settings_for_regime(regime, eff_settings)
+
+        target_profit_rate = float(eff_settings.get("target_profit_rate", 0.05)) * 100
+        stop_loss_rate = float(eff_settings.get("stop_loss_rate", -0.03)) * 100
 
         pos_state = self._update_position_state(code, current_price, avg_buy_price)
         is_partial_sold = pos_state.get("is_partial_sold", False)
@@ -245,7 +258,8 @@ class StockScreener:
                 current_date=today().strftime("%Y%m%d"),
                 use_file_cooldown=False,
                 is_partial_sold=is_partial_sold,
-                highest_price=highest_price
+                highest_price=highest_price,
+                market_regime=market_regime
             )
             if sell_res:
                 if sell_res.get("is_partial_take"):
@@ -293,7 +307,8 @@ class StockScreener:
             current_date=today().strftime("%Y%m%d"),
             use_file_cooldown=False,
             is_partial_sold=is_partial_sold,
-            highest_price=highest_price
+            highest_price=highest_price,
+            market_regime=market_regime
         )
         if sell_res:
             if sell_res.get("is_partial_take"):
@@ -342,11 +357,20 @@ class StockScreener:
             except Exception as e:
                 self.logger.warning(f"[{holding.get('name')}] 매도 분석 예외: {e}")
 
+        # 기존 매도 추천 유지: 아직 보유 중인 종목의 기존 매도 신호를 보존
+        # (1차 분할 익절 등은 1회만 감지되므로, 이후 재분석에서 사라지지 않도록 병합)
+        existing = self.load_proposals()
+        existing_sell = existing.get("sell_proposals", [])
+        existing_by_code = {s.get("code"): s for s in existing_sell if s.get("code") in held_codes}
+        for new_sell in sell_proposals:
+            existing_by_code[new_sell.get("code")] = new_sell
+        merged_sell_proposals = list(existing_by_code.values())
+
         proposals_data = {
             "generated_at": now_str(),
             "screening_type": "CLOSING_BUY_1515",
             "buy_proposals": top_buy_proposals,
-            "sell_proposals": sell_proposals,
+            "sell_proposals": merged_sell_proposals,
             "holdings_count": len(holdings),
             "status": "READY"
         }
@@ -368,7 +392,15 @@ class StockScreener:
         holdings = balance.get("holdings", [])
         urgent_sells = []
 
-        stop_loss_rate = float(config.CURRENT_SETTINGS.get("stop_loss_rate", -0.03)) * 100
+        # 시장 국면 감지 및 유효 설정 적용 (AUTO 모드에서 프리셋 자동 전환)
+        market_regime = None
+        if config.CURRENT_SETTINGS.get("market_regime_filter_enabled", True):
+            market_regime = self.get_market_regime(market="KOSPI")
+        regime = (market_regime or {}).get("regime", "BULL")
+        eff_settings = config.get_effective_strategy_settings(self.strategy.name, config.CURRENT_SETTINGS)
+        eff_settings = config.get_effective_settings_for_regime(regime, eff_settings)
+
+        stop_loss_rate = float(eff_settings.get("stop_loss_rate", -0.03)) * 100
 
         for holding in holdings:
             profit_rate = float(holding.get("profit_rate", 0.0))
@@ -398,6 +430,7 @@ class StockScreener:
 
         balance = self.api.get_account_balance()
         holdings = balance.get("holdings", [])
+        holding_codes = {h.get("code") for h in holdings if h.get("code")}
         sell_proposals = []
         for holding in holdings:
             try:
@@ -407,16 +440,24 @@ class StockScreener:
             except Exception as e:
                 self.logger.warning(f"[{holding.get('name')}] 매도 분석 예외: {e}")
 
+        # 기존 매도 추천 유지: 아직 보유 중인 종목의 기존 매도 신호를 보존
+        # (1차 분할 익절 등은 1회만 감지되므로, 이후 재분석에서 사라지지 않도록 병합)
+        existing_sell = existing.get("sell_proposals", [])
+        existing_by_code = {s.get("code"): s for s in existing_sell if s.get("code") in holding_codes}
+        for new_sell in sell_proposals:
+            existing_by_code[new_sell.get("code")] = new_sell
+        merged_sell_proposals = list(existing_by_code.values())
+
         proposals_data = {
             "generated_at": now_str(),
             "buy_proposals": buy_proposals,
-            "sell_proposals": sell_proposals,
+            "sell_proposals": merged_sell_proposals,
             "holdings_count": len(holdings),
             "status": "READY"
         }
 
         self.save_proposals(proposals_data)
-        self.logger.info(f"실시간 매도 신호 재분석 완료: 매도 추천 {len(sell_proposals)}건")
+        self.logger.info(f"실시간 매도 신호 재분석 완료: 매도 추천 {len(merged_sell_proposals)}건")
         self._notify_sell_recommendations(sell_proposals)
         return proposals_data
 
