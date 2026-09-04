@@ -473,9 +473,17 @@ class StockScreener:
         if not config.CURRENT_SETTINGS.get("auto_execute_orders", False):
             return []
 
+        # 시장 국면 감지 및 유효 설정 적용 (AUTO 모드에서 프리셋 자동 전환)
+        market_regime = None
+        if config.CURRENT_SETTINGS.get("market_regime_filter_enabled", True):
+            market_regime = self.get_market_regime(market="KOSPI")
+        regime = (market_regime or {}).get("regime", "BULL")
+        eff_settings = config.get_effective_strategy_settings(self.strategy.name, config.CURRENT_SETTINGS)
+        eff_settings = config.get_effective_settings_for_regime(regime, eff_settings)
+
         executed = []
-        max_holdings = int(config.CURRENT_SETTINGS.get("max_holding_stocks", 5))
-        max_daily_buy = int(config.CURRENT_SETTINGS.get("max_daily_buy_count", 2))
+        max_holdings = int(eff_settings.get("max_holding_stocks", 5))
+        max_daily_buy = int(eff_settings.get("max_daily_buy_count", 2))
         balance = self.api.get_account_balance()
         current_holding_count = len(balance.get("holdings", []))
         daily_new_buy_count = 0
