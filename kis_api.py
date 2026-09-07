@@ -267,6 +267,86 @@ class KISApiClient:
             self.logger.error(f"[{stock_code}] 시세 조회 에러: {e}")
             return {"rt_cd": "-1", "msg1": str(e), "price": 0.0}
 
+    def get_stock_futures_price(self, stock_code: str) -> Dict[str, Any]:
+        """
+        개별주식선물 최근월물 시세 조회 (FHMIF10000000)
+        - stock_code: 기초자산 주식 종목코드 (예: '005930')
+        """
+        try:
+            from core.futures_manager import futures_manager
+            fut_code = futures_manager.get_futures_code(stock_code)
+            if not fut_code:
+                return {"has_futures": False, "stock_code": stock_code}
+
+            url = f"{self.url_base}/uapi/domestic-futureoption/v1/quotations/inquire-price"
+            headers = self._get_headers("FHMIF10000000")
+            params = {
+                "FID_COND_MRKT_DIV_CODE": "JF",
+                "FID_INPUT_ISCD": fut_code
+            }
+            res = self._request_with_retry("GET", url, headers=headers, params=params, timeout=5)
+            data = res.json()
+            out1 = data.get("output1", {})
+            if out1:
+                prpr = float(out1.get("futs_prpr", 0.0))
+                mrkt_basis = float(out1.get("mrkt_basis", 0.0))
+                basis = float(out1.get("basis", 0.0))
+                oi = int(out1.get("hts_otst_stpl_qty", 0))
+                oi_change = int(out1.get("otst_stpl_qty_icdc", 0))
+                change_rate = float(out1.get("futs_prdy_ctrt", 0.0))
+                vol = int(out1.get("acml_vol", 0))
+                return {
+                    "has_futures": True,
+                    "stock_code": stock_code,
+                    "futures_code": fut_code,
+                    "futures_name": out1.get("hts_kor_isnm", ""),
+                    "price": prpr,
+                    "change_rate": change_rate,
+                    "basis": basis,
+                    "market_basis": mrkt_basis,
+                    "open_interest": oi,
+                    "oi_change": oi_change,
+                    "volume": vol,
+                    "is_contango": mrkt_basis > 0
+                }
+            return {"has_futures": False, "stock_code": stock_code}
+        except Exception as e:
+            self.logger.warning(f"[{stock_code}] 주식선물 시세 조회 실패: {e}")
+            return {"has_futures": False, "stock_code": stock_code}
+
+    def get_index_futures_price(self, iscd: str = "10100000") -> Dict[str, Any]:
+        """
+        코스피200 지수선물 시세 조회 (FHMIF10000000)
+        - iscd: 선물 종목코드 (기본 '10100000' 코스피200 연결선물)
+        """
+        url = f"{self.url_base}/uapi/domestic-futureoption/v1/quotations/inquire-price"
+        headers = self._get_headers("FHMIF10000000")
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "F",
+            "FID_INPUT_ISCD": iscd
+        }
+        try:
+            res = self._request_with_retry("GET", url, headers=headers, params=params, timeout=5)
+            data = res.json()
+            out1 = data.get("output1", {})
+            if out1:
+                mrkt_basis = float(out1.get("mrkt_basis", 0.0))
+                return {
+                    "success": True,
+                    "name": out1.get("hts_kor_isnm", ""),
+                    "price": float(out1.get("futs_prpr", 0.0)),
+                    "change_rate": float(out1.get("futs_prdy_ctrt", 0.0)),
+                    "basis": float(out1.get("basis", 0.0)),
+                    "market_basis": mrkt_basis,
+                    "open_interest": int(out1.get("hts_otst_stpl_qty", 0)),
+                    "oi_change": int(out1.get("otst_stpl_qty_icdc", 0)),
+                    "volume": int(out1.get("acml_vol", 0)),
+                    "is_contango": mrkt_basis > 0
+                }
+        except Exception as e:
+            self.logger.warning(f"지수선물({iscd}) 시세 조회 실패: {e}")
+        return {"success": False}
+
     def get_daily_chart(self, stock_code: str, period: str = "D", count: int = 60) -> List[Dict[str, Any]]:
         """일별 차트/시세 데이터 조회 (OHLCV)"""
         end_date = today().strftime("%Y%m%d")

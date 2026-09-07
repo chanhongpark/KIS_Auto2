@@ -68,7 +68,7 @@ def render_overview_tab(api, screener, summary, holdings, proposals, holding_cod
         st.subheader("🌅 15:15 종가 매수 추천 Top")
         buy_list = proposals.get("buy_proposals", [])
         if not buy_list:
-            st.info("현재 매수 조건을 통과한 추천 종목이 없습니다. (총점 45점 이상 & 수급 필수 게이트 충족 필요)")
+            st.info("현재 매수 조건을 통과한 추천 종목이 없습니다. (100점 만점 기준 60점 이상 & 수급 필수 게이트 충족 필요)")
         else:
             for b in buy_list[:3]:
                 buy_tag = "🔄 추가매수" if b.get("code") in holding_codes else "🆕 신규매수"
@@ -76,10 +76,12 @@ def render_overview_tab(api, screener, summary, holdings, proposals, holding_cod
                 t_sc = b.get("trend_score")
                 s_sc = b.get("supply_score")
                 m_sc = b.get("momentum_score")
+                f_sc = b.get("futures_score")
                 score_details = []
                 if t_sc is not None: score_details.append(f"추세 {t_sc}")
                 if s_sc is not None: score_details.append(f"수급 {s_sc}")
                 if m_sc is not None: score_details.append(f"모멘텀 {m_sc}")
+                if f_sc is not None: score_details.append(f"선물 {f_sc}")
                 if b.get("w52_drop_rate") is not None: score_details.append(f"낙폭 {b['w52_drop_rate']:+.1f}%")
                 detail_str = f" ({'/'.join(score_details)})" if score_details else ""
                 st.markdown(f"**{buy_tag} [{b['name']} ({b['code']})]{strat_tag}** 현재가: `{b['current_price']:,.0f}원` | **총점: `{b['score']}점`**{detail_str}")

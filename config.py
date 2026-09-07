@@ -93,9 +93,9 @@ MARKET_REGIME_PRESETS: Dict[str, Dict[str, Any]] = {
         "trailing_stop_pct": 0.06,
         "time_stop_days": 12,
         "time_stop_min_profit": 0.02,
-        "buy_score_threshold": 45,
-        "market_regime_cutoff_normal": 45,
-        "market_regime_cutoff_weak": 70,
+        "buy_score_threshold": 60,
+        "market_regime_cutoff_normal": 60,
+        "market_regime_cutoff_weak": 75,
         "max_daily_buy_count": 3,
         "atr_stop_loss_multiple": 2.2,
         "atr_stop_loss_min_pct": -0.055,
@@ -109,9 +109,9 @@ MARKET_REGIME_PRESETS: Dict[str, Dict[str, Any]] = {
         "trailing_stop_pct": 0.035,
         "time_stop_days": 6,
         "time_stop_min_profit": 0.02,
-        "buy_score_threshold": 55,
-        "market_regime_cutoff_normal": 55,
-        "market_regime_cutoff_weak": 70,
+        "buy_score_threshold": 65,
+        "market_regime_cutoff_normal": 65,
+        "market_regime_cutoff_weak": 75,
         "max_daily_buy_count": 2,
         "atr_stop_loss_multiple": 2.0,
         "atr_stop_loss_min_pct": -0.045,
@@ -119,15 +119,15 @@ MARKET_REGIME_PRESETS: Dict[str, Dict[str, Any]] = {
     },
     "BEAR": {
         "name": "🛡️ 하락장/방어 모드 (Bear Defense)",
-        "description": "원금 보존 & 타이트한 초긴급 방어 (목표익절 +3%, 트레일링 2.0%, 칼손절 -2.5%, 컷오프 70점, 타임컷 3일)",
+        "description": "원금 보존 & 타이트한 초긴급 방어 (목표익절 +3%, 트레일링 2.0%, 칼손절 -2.5%, 컷오프 75점, 타임컷 3일)",
         "target_profit_rate": 0.03,
         "stop_loss_rate": -0.025,
         "trailing_stop_pct": 0.02,
         "time_stop_days": 3,
         "time_stop_min_profit": 0.01,
-        "buy_score_threshold": 70,
-        "market_regime_cutoff_normal": 70,
-        "market_regime_cutoff_weak": 75,
+        "buy_score_threshold": 75,
+        "market_regime_cutoff_normal": 75,
+        "market_regime_cutoff_weak": 80,
         "max_daily_buy_count": 1,
         "atr_stop_loss_multiple": 1.5,
         "atr_stop_loss_min_pct": -0.035,
@@ -150,11 +150,13 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "auto_execute_orders": False,           # 주문 완전 자동화 여부 (False: UI 원클릭 승인)
     "telegram_enabled": False,              # 텔레그램 알림 활성화 여부 (기본: OFF)
 
-    # --- 스크리닝 점수 카테고리별 상한 (Cap) ---
+    # --- 스크리닝 점수 카테고리별 상한 (Cap) 및 파생 수급 ---
+    "use_futures_filter": True,             # 개별주식선물 수급 분석 활성화 여부 (베이시스/미결제약정 4번째 군 최대 20점)
     "score_cap_trend": 40,                  # 추세군(이동평균) 최대 점수 상한
     "score_cap_momentum": 30,               # 모멘텀군(RSI, 볼린저) 최대 점수 상한
     "score_cap_volume": 25,                 # 거래량군 최대 점수 상한
-    "buy_score_threshold": 45,              # 매수 추천 최소 종합 점수 (45점 이상 추천)
+    "score_cap_futures": 20,                # 선행 파생수급군 최대 점수 상한
+    "buy_score_threshold": 60,              # 매수 추천 최소 종합 점수 (100점 만점 기준 60점 이상 추천)
 
     # --- 실시간 봉 반영 설정 ---
     "use_realtime_candle": False,           # 실시간 현재가를 일봉에 반영할지 여부 (False: 완성봉만 사용)
@@ -183,8 +185,8 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     # --- 시장 국면 필터 (Market Regime Filter) ---
     "market_regime_filter_enabled": True,   # 시장 국면 필터 활성화
     "market_regime_ma_period": 20,          # 시장 국면 판단 이동평균 기간 (20일)
-    "market_regime_cutoff_normal": 45,      # 정상 국면 매수 점수 컷오프
-    "market_regime_cutoff_weak": 70,        # 약세 국면 매수 점수 컷오프 (상향)
+    "market_regime_cutoff_normal": 60,      # 정상 국면 매수 점수 컷오프 (100점 만점 기준)
+    "market_regime_cutoff_weak": 75,        # 약세 국면 매수 점수 컷오프 (상향)
     "market_regime_block_weak": False,       # 약세 국면 신규 진입 전면 차단 여부
 
     # --- 손절 종목 쿨다운 (Cool-down) ---

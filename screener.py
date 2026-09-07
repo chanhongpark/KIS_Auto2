@@ -148,7 +148,8 @@ class StockScreener:
         budget: Optional[float] = None,
         market_regime: Optional[Dict[str, Any]] = None,
         current_date: Optional[str] = None,
-        use_file_cooldown: bool = False
+        use_file_cooldown: bool = False,
+        futures_data: Optional[Dict[str, Any]] = None
     ) -> Optional[Dict[str, Any]]:
         """기술적 보조지표 DataFrame을 바탕으로 활성화된 모든 전략 매수 신호 평가"""
         in_cooldown = self._is_in_cooldown(code, current_date=current_date, use_file_cooldown=use_file_cooldown)
@@ -165,7 +166,8 @@ class StockScreener:
                     budget=budget,
                     market_regime=market_regime,
                     settings=config.CURRENT_SETTINGS,
-                    is_in_cooldown=in_cooldown
+                    is_in_cooldown=in_cooldown,
+                    futures_data=futures_data
                 )
                 if res:
                     res["strategy"] = strat.name
@@ -236,11 +238,19 @@ class StockScreener:
         if config.CURRENT_SETTINGS.get("market_regime_filter_enabled", True):
             market_regime = self.get_market_regime(market=market)
 
+        futures_data = None
+        if config.CURRENT_SETTINGS.get("use_futures_filter", True):
+            try:
+                futures_data = self.api.get_stock_futures_price(code)
+            except Exception as e:
+                self.logger.warning(f"[{name}({code})] 주식선물 수급 조회 예외: {e}")
+
         return self.evaluate_buy_signals_from_df(
             df, code, name,
             held_codes=held_codes,
             market_regime=market_regime,
-            use_file_cooldown=False
+            use_file_cooldown=False,
+            futures_data=futures_data
         )
 
     # =========================================================================

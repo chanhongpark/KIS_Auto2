@@ -12,7 +12,7 @@ def render_screener(api, screener, proposals, holding_codes):
     col_t1, col_t2 = st.columns([3.2, 1.3])
     with col_t1:
         st.title("🎯 15:15 종가 매수 • 스크리닝 & 발주")
-        st.caption(f"스크리닝 기준 시각: **{proposals.get('generated_at', '-')}** | 거래량 1.04배 보정치 & 캡 점수 적용 (45점 이상)")
+        st.caption(f"스크리닝 기준 시각: **{proposals.get('generated_at', '-')}** | 개별주식선물 파생수급 & 100점 만점 척도 적용 (60점 이상)")
     with col_t2:
         st.write("")
         if st.button("🔄 즉시 종가 스크리닝 실행", key="btn_run_screener_page", type="primary", width="stretch"):
@@ -24,7 +24,7 @@ def render_screener(api, screener, proposals, holding_codes):
 
     buy_list = proposals.get("buy_proposals", [])
     if not buy_list:
-        st.info("현재 추천된 매수 종목이 없습니다. 상단의 **[🔄 즉시 종가 스크리닝 실행]** 버튼을 누르거나 15:15 자동 스케줄을 기다려주세요. (총점 45점 이상 & 수급 필수 게이트 충족 종목 표시)")
+        st.info("현재 추천된 매수 종목이 없습니다. 상단의 **[🔄 즉시 종가 스크리닝 실행]** 버튼을 누르거나 15:15 자동 스케줄을 기다려주세요. (총점 60점 이상 & 수급 필수 게이트 충족 종목 표시)")
     else:
         for idx, item in enumerate(buy_list):
             with st.container():
@@ -44,6 +44,14 @@ def render_screener(api, screener, proposals, holding_codes):
                         badges.append(f"<span class='score-badge'>수급 {item['supply_score']}/25</span>")
                     if "momentum_score" in item:
                         badges.append(f"<span class='score-badge'>모멘텀 {item['momentum_score']}/25</span>")
+                    if item.get("futures_score") is not None:
+                        basis_tag = "콘탱고" if item.get("is_contango") else "백워데이션"
+                        basis_val = item.get("market_basis", 0)
+                        badges.append(f"<span class='score-badge' style='background:#064e3b; border:1px solid #059669; color:#34d399;'>📊 선물 {item['futures_score']}/20 ({basis_tag} {basis_val:+,.0f}원)</span>")
+                    elif item.get("has_futures") is False:
+                        badges.append("<span class='score-badge' style='background:#1e293b; border:1px solid #475569; color:#94a3b8;'>선물미상장(환산)</span>")
+                    if item.get("futures_warning"):
+                        badges.append("<span class='score-badge' style='background:#450a0a; border:1px solid #ef4444; color:#f87171;'>🚨 선물역행주의</span>")
                     if item.get("w52_drop_rate") is not None:
                         badges.append(f"<span class='score-badge' style='color:#f87171;'>52주고가대비 {item['w52_drop_rate']:+.1f}%</span>")
                     st.markdown(" ".join(badges), unsafe_allow_html=True)

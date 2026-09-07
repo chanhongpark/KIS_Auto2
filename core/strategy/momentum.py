@@ -57,12 +57,14 @@ class MomentumStrategy(BaseStrategy):
          "default": False, "description": "RSI 75 초과 시 전량 매도 (체크 해제 시 50% 분할 매도)", "category": "common"},
         {"key": "market_regime_filter_enabled", "label": "시장 국면 필터 활성화", "type": "toggle",
          "default": True, "description": "시장 국면 필터 활성화 여부", "category": "common"},
+        {"key": "use_futures_filter", "label": "개별주식선물 수급 분석 활성화", "type": "toggle",
+         "default": True, "description": "개별주식선물 베이시스 및 미결제약정 수급 4번째 점수군(최대 20점) 반영 여부", "category": "common"},
         {"key": "market_regime_cutoff_normal", "label": "정상 국면 매수 점수 컷오프", "type": "number",
-         "default": 45, "min": 0, "max": 100, "step": 1,
-         "description": "정상/상승 국면 매수 점수 컷오프", "category": "common"},
+         "default": 60, "min": 0, "max": 100, "step": 1,
+         "description": "정상/상승 국면 매수 점수 컷오프 (100점 만점 기준)", "category": "common"},
         {"key": "market_regime_cutoff_weak", "label": "약세 국면 매수 점수 컷오프", "type": "number",
-         "default": 70, "min": 0, "max": 100, "step": 1,
-         "description": "약세/하락 국면 매수 점수 컷오프", "category": "common"},
+         "default": 75, "min": 0, "max": 100, "step": 1,
+         "description": "약세/하락 국면 매수 점수 컷오프 (100점 만점 기준)", "category": "common"},
         {"key": "market_regime_block_weak", "label": "약세 국면 신규 진입 차단", "type": "toggle",
          "default": False, "description": "약세 국면 신규 진입 전면 차단 여부", "category": "common"},
         {"key": "cooldown_enabled", "label": "손절 쿨다운 활성화", "type": "toggle",
@@ -190,7 +192,8 @@ class MomentumStrategy(BaseStrategy):
         budget: Optional[float] = None,
         market_regime: Optional[Dict[str, Any]] = None,
         settings: Optional[Dict[str, Any]] = None,
-        is_in_cooldown: bool = False
+        is_in_cooldown: bool = False,
+        futures_data: Optional[Dict[str, Any]] = None
     ) -> Optional[Dict[str, Any]]:
         """
         계산된 기술적 보조지표 DataFrame을 바탕으로 매수 점수 및 안전/수급/눌림목 게이트 평가
@@ -351,14 +354,67 @@ class MomentumStrategy(BaseStrategy):
         momentum_score = min(min(25, cap_mom), raw_momentum_score)
 
         # -------------------------------------------------------------
-        # 4. 종합 진입 조건 판별 (시장 국면별 컷오프 적용)
+        # 4. 선행 파생수급군 점수 산출 (그룹 상한: 최대 20점 / 총점 100점 척도)
         # -------------------------------------------------------------
-        total_score = trend_score + supply_score + momentum_score
+        futures_score = 0
+        use_futures = settings.get("use_futures_filter", True)
+        has_futures = bool(futures_data and futures_data.get("has_futures"))
+        market_basis = 0.0
+        oi_change = 0
+        is_contango = False
+        futures_warning = False
 
-        if settings.get("market_regime_filter_enabled", True) and regime == "WEAK":
-            buy_threshold = float(settings.get("market_regime_cutoff_weak", 70))
+        if use_futures and has_futures:
+            market_basis = float(futures_data.get("market_basis", 0.0))
+            oi_change = int(futures_data.get("oi_change", 0))
+            is_contango = bool(futures_data.get("is_contango", False))
+            oi_total = int(futures_data.get("open_interest", 0))
+
+            # 1) 시장 베이시스 (Market Basis = 선물가격 - 현물가격) 평가
+            basis_pct = (market_basis / current_price) * 100.0 if current_price > 0 else 0.0
+            if market_basis > 0:
+                if basis_pct >= 0.2:  # 강력한 콘탱고 (+0.2% 이상)
+                    futures_score += 10
+                    reasons.append(f"📈 [선물] 강력한 콘탱고(베이시스 +{market_basis:,.0f}원, +{basis_pct:.2f}%) - 선물 프리미엄 현물 견인 (+10점)")
+                else:
+                    futures_score += 8
+                    reasons.append(f"📈 [선물] 콘탱고(베이시스 +{market_basis:,.0f}원) - 매수 우세 (+8점)")
+            elif basis_pct <= -0.5:  # 심각한 백워데이션 (-0.5% 이하)
+                futures_score -= 5
+                reasons.append(f"📉 [선물] 심각한 백워데이션(베이시스 {market_basis:,.0f}원, {basis_pct:.2f}%) - 단기 하락 압력 (-5점)")
+
+            # 2) 미결제약정 증감 (OI Change) 평가
+            if change_rate > 0 and oi_change > 0:
+                futures_score += 10
+                reasons.append(f"🔥 [선물] 주가 상승 동반 미결제약정 증가(+{oi_change:,}계약) - 신규 롱포지션 진입 확인 (+10점)")
+            elif change_rate > 0 and oi_change < 0:
+                reasons.append(f"⚠️ [선물] 주가 상승 중 미결제약정 감소({oi_change:,}계약) - 단순 숏커버링 반등 가능성 (+0점)")
+            elif change_rate < 0 and oi_change > 0:
+                reasons.append(f"⚠️ [선물] 주가 하락 중 미결제약정 증가(+{oi_change:,}계약) - 신규 숏포지션 공세 (+0점)")
+
+            # 3) 킬스위치 / 선물 역행 필터 (Kill-switch)
+            if change_rate >= 2.0 and (basis_pct <= -0.4 or (oi_change < -5000 and oi_total > 0 and (abs(oi_change) / oi_total) >= 0.05)):
+                futures_warning = True
+                futures_score -= 10
+                reasons.append("🚨 [선물 역행 경고] 현물 급등 대비 선물 시장 역행/수급 이탈 감지 (가짜 상승 주의, -10점)")
+
+            # 그룹 상한 캡 (0점 ~ 20점)
+            futures_score = max(0, min(20, futures_score))
+            total_score = trend_score + supply_score + momentum_score + futures_score
         else:
-            buy_threshold = float(settings.get("market_regime_cutoff_normal", settings.get("buy_score_threshold", 45)))
+            # 개별주식선물이 미상장된 종목 (중소형주 등) 또는 데이터 미조회 시
+            # 기존 3개 카테고리 합계(최대 80점 만점 기준)를 100점 만점으로 비례 환산
+            raw_score = trend_score + supply_score + momentum_score
+            total_score = round(min(100.0, raw_score * (100.0 / 80.0)), 1)
+            reasons.append("ℹ️ 개별주식선물 미상장 종목 (기본 80점 척도를 100점 만점으로 비례 환산)")
+
+        # -------------------------------------------------------------
+        # 5. 종합 진입 조건 판별 (시장 국면별 컷오프 적용, 100점 만점 척도)
+        # -------------------------------------------------------------
+        if settings.get("market_regime_filter_enabled", True) and regime == "WEAK":
+            buy_threshold = float(settings.get("market_regime_cutoff_weak", 75))
+        else:
+            buy_threshold = float(settings.get("market_regime_cutoff_normal", settings.get("buy_score_threshold", 60)))
 
         if total_score >= buy_threshold and supply_gate_passed:
             default_budget = float(settings.get("max_buy_budget_per_stock", 500000.0))
@@ -377,6 +433,12 @@ class MomentumStrategy(BaseStrategy):
                 "trend_score": trend_score,
                 "supply_score": supply_score,
                 "momentum_score": momentum_score,
+                "futures_score": futures_score if (use_futures and has_futures) else None,
+                "has_futures": has_futures,
+                "market_basis": market_basis if (use_futures and has_futures) else None,
+                "oi_change": oi_change if (use_futures and has_futures) else None,
+                "is_contango": is_contango if (use_futures and has_futures) else None,
+                "futures_warning": futures_warning,
                 "supply_gate_passed": supply_gate_passed,
                 "adjusted_volume": adj_volume,
                 "vol_ma20": vol_ma20,
