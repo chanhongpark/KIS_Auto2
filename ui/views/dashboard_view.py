@@ -368,7 +368,6 @@ def render_risk_tab(api, screener, holdings, proposals, realtime_detection_fragm
         st.info("현재 계좌에 보유 중인 주식이 없습니다.")
     else:
         st.write("### 📦 전체 보유 주식 목록")
-        # 표 형태로 출력 (Streamlit dataframe)
         holdings_df = pd.DataFrame([
             {
                 "수익": "▲" if float(h.get("profit_rate", 0)) > 0 else "▼" if float(h.get("profit_rate", 0)) < 0 else "•",
@@ -377,6 +376,7 @@ def render_risk_tab(api, screener, holdings, proposals, realtime_detection_fragm
                 "보유수량": h["quantity"],
                 "매입평균가": h["avg_buy_price"],
                 "현재가": h["current_price"],
+                "당일등락률": float(h.get("change_rate", 0)),
                 "수익률(%)": float(h.get("profit_rate", 0)),
                 "평가손익(원)": h.get("profit_loss", 0),
                 "평가금액(원)": h.get("eval_amount", 0),
@@ -386,6 +386,7 @@ def render_risk_tab(api, screener, holdings, proposals, realtime_detection_fragm
         holdings_df["보유수량"] = holdings_df["보유수량"].apply(lambda x: f"{x:,}")
         holdings_df["매입평균가"] = holdings_df["매입평균가"].apply(lambda x: f"{x:,.0f}")
         holdings_df["현재가"] = holdings_df["현재가"].apply(lambda x: f"{x:,.0f}")
+        holdings_df["당일등락률"] = holdings_df["당일등락률"].apply(lambda x: f"{x:+.2f}%")
         holdings_df["수익률(%)"] = holdings_df["수익률(%)"].apply(lambda x: f"{x:+.2f}%")
         holdings_df["평가손익(원)"] = holdings_df["평가손익(원)"].apply(lambda x: f"{x:+,.0f}")
         holdings_df["평가금액(원)"] = holdings_df["평가금액(원)"].apply(lambda x: f"{x:,.0f}")
@@ -404,6 +405,19 @@ def render_risk_tab(api, screener, holdings, proposals, realtime_detection_fragm
             for col_name in ["수익", "수익률(%)", "평가손익(원)"]:
                 if col_name in row.index:
                     styles[row.index.get_loc(col_name)] = style_str
+
+            # 당일 주가 등락률 스타일링
+            c_val = str(row.get("당일등락률", "")).strip()
+            if c_val.startswith("+"):
+                c_style_str = "color: #ff4d4f; font-weight: 600;"
+            elif c_val.startswith("-"):
+                c_style_str = "color: #38bdf8; font-weight: 600;"
+            else:
+                c_style_str = "color: #94a3b8;"
+
+            if "당일등락률" in row.index:
+                styles[row.index.get_loc("당일등락률")] = c_style_str
+
             return styles
 
         styled_holdings = holdings_df.style.apply(_style_profit_loss, axis=1)

@@ -344,6 +344,7 @@ class KISApiClient:
                         "eval_amount": float(item.get("evlu_amt", 0)),
                         "profit_loss": float(item.get("evlu_pfls_amt", 0)),
                         "profit_rate": float(item.get("evlu_pfls_rt", 0)),
+                        "change_rate": float(item.get("fltt_rt") or item.get("prdy_ctrt") or 0.0),
                     })
 
             summary = {}
