@@ -227,7 +227,8 @@ class TelegramNotifier:
         sell_count: int,
         holdings_count: int,
         buy_list: Optional[List[Dict[str, Any]]] = None,
-        sell_list: Optional[List[Dict[str, Any]]] = None
+        sell_list: Optional[List[Dict[str, Any]]] = None,
+        top_candidates: Optional[List[Dict[str, Any]]] = None
     ) -> bool:
         """일일 스크리닝 요약 알림 전송 (15:15 종가 매수 및 매도 현황)"""
         text = (
@@ -246,9 +247,20 @@ class TelegramNotifier:
                 t_score = item.get("trend_score", 0)
                 s_score = item.get("supply_score", 0)
                 m_score = item.get("momentum_score", 0)
+                f_score = item.get("futures_score")
+                f_str = f"/선물 {f_score}" if f_score is not None else ""
                 text += (
                     f"• {buy_tag} <b>{html_escape(item.get('name', ''))}</b> ({html_escape(item.get('code', ''))})\n"
-                    f"  💰 {item.get('current_price', 0):,.0f}원 | 🎯 총 {score}점 (추세 {t_score}/수급 {s_score}/모멘텀 {m_score})\n"
+                    f"  💰 {item.get('current_price', 0):,.0f}원 | 🎯 총 {score}점 (추세 {t_score}/수급 {s_score}/모멘텀 {m_score}{f_str})\n"
+                )
+        elif top_candidates:
+            text += "\n<b>👀 [관망 후보 Top 3 (매수 추천 아님)]</b>\n"
+            for item in top_candidates[:3]:
+                score = item.get("score", 0)
+                reason = item.get("disqualify_reason", "기준 미달")
+                text += (
+                    f"• <b>{html_escape(item.get('name', ''))}</b> ({html_escape(item.get('code', ''))})\n"
+                    f"  💰 {item.get('current_price', 0):,.0f}원 | 📊 {score}점 ({html_escape(str(reason))})\n"
                 )
 
         if sell_list:

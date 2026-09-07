@@ -193,10 +193,12 @@ class MomentumStrategy(BaseStrategy):
         market_regime: Optional[Dict[str, Any]] = None,
         settings: Optional[Dict[str, Any]] = None,
         is_in_cooldown: bool = False,
-        futures_data: Optional[Dict[str, Any]] = None
+        futures_data: Optional[Dict[str, Any]] = None,
+        return_raw_eval: bool = False
     ) -> Optional[Dict[str, Any]]:
         """
         계산된 기술적 보조지표 DataFrame을 바탕으로 매수 점수 및 안전/수급/눌림목 게이트 평가
+        - return_raw_eval: True일 경우 게이트 탈락 시에도 탈락 사유와 종합 점수를 계산하여 반환
         """
         if df is None or len(df) < 20:
             return None
@@ -217,6 +219,7 @@ class MomentumStrategy(BaseStrategy):
         change_rate = float(last.get("change_rate", 0.0))
 
         reasons = []
+        disqualify_reason: Optional[str] = None
 
         # -------------------------------------------------------------
         # [시장 국면 필터] 약세/하락 국면 시 매수 점수 컷오프 상향 또는 전면 차단
@@ -224,7 +227,9 @@ class MomentumStrategy(BaseStrategy):
         if settings.get("market_regime_filter_enabled", True) and regime == "BEAR":
             if settings.get("market_regime_block_weak", False):
                 logger.info(f"[{name}({code})] 약세 시장 국면 - 신규 진입 전면 차단")
-                return None
+                disqualify_reason = "약세 시장 국면 - 신규 진입 차단"
+                if not return_raw_eval:
+                    return None
             reasons.append("⚠️ 약세/하락 시장 국면 - 방어적 매수 점수 컷오프 상향 적용")
 
         # -------------------------------------------------------------
@@ -232,7 +237,9 @@ class MomentumStrategy(BaseStrategy):
         # -------------------------------------------------------------
         if is_in_cooldown:
             logger.info(f"[{name}({code})] 손절 쿨다운 기간 내 - 재매수 차단")
-            return None
+            disqualify_reason = "손절 후 쿨다운 기간"
+            if not return_raw_eval:
+                return None
 
         # -------------------------------------------------------------
         # [개선 3: 고점 추격 매수 방지 & 안전 게이트 1] 이격도 과열 방지
@@ -244,13 +251,19 @@ class MomentumStrategy(BaseStrategy):
         high_chase_ma5_pct = float(settings.get("momentum_high_chase_ma5_pct", 0.03))
         high_chase_ma20_pct = float(settings.get("momentum_high_chase_ma20_pct", 0.06))
         if ma5_val > 0 and (current_price / ma5_val) > (1 + high_chase_ma5_pct):
-            return None
+            disqualify_reason = "5일선 이격도 과열 (단기 고점 추격 방지)"
+            if not return_raw_eval:
+                return None
         if ma20_val > 0 and (current_price / ma20_val) > (1 + high_chase_ma20_pct):
-            return None
+            disqualify_reason = "20일선 이격도 과열 (단기 고점 추격 방지)"
+            if not return_raw_eval:
+                return None
 
         # 당일 급등(+4.5% 이상) 종목의 상투 추격 차단
         if change_rate >= 4.5 and ma5_val > 0 and (current_price / ma5_val) > 1.025:
-            return None
+            disqualify_reason = "당일 급등(+4.5% 이상) 상투 추격 차단"
+            if not return_raw_eval:
+                return None
 
         # -------------------------------------------------------------
         # [안전 게이트 2] 캔들 형태 필터 (윗꼬리 매물 출회 차단)
@@ -260,7 +273,9 @@ class MomentumStrategy(BaseStrategy):
             upper_shadow = high_price - max(open_price, current_price)
             upper_shadow_ratio = float(settings.get("momentum_upper_shadow_ratio", 0.40))
             if (upper_shadow / total_range) >= upper_shadow_ratio:
-                return None
+                disqualify_reason = "윗꼬리 매물 출회 (단기 차익 실현 압력)"
+                if not return_raw_eval:
+                    return None
 
         # -------------------------------------------------------------
         # 1. 추세군 점수 산출 (그룹 상한: 최대 30점)
@@ -320,11 +335,17 @@ class MomentumStrategy(BaseStrategy):
                 supply_score = min(min(25, cap_vol), raw_supply_score)
             else:
                 if (adj_volume / vol_ma20) < vol_ratio_min:
-                    return None
+                    disqualify_reason = f"거래량 부족 (20일평균 대비 {vol_ratio:.0f}% < {vol_ratio_min*100:.0f}%)"
+                    if not return_raw_eval:
+                        return None
                 elif (adj_volume / vol_ma20) > vol_ratio_max:
-                    return None
+                    disqualify_reason = f"거래량 과열 (20일평균 대비 {vol_ratio:.0f}% > {vol_ratio_max*100:.0f}%)"
+                    if not return_raw_eval:
+                        return None
         else:
-            return None
+            disqualify_reason = "20일 평균 거래량 부족"
+            if not return_raw_eval:
+                return None
 
         # -------------------------------------------------------------
         # 3. 모멘텀군 점수 산출 (그룹 상한: 최대 25점)
@@ -416,56 +437,64 @@ class MomentumStrategy(BaseStrategy):
         else:
             buy_threshold = float(settings.get("market_regime_cutoff_normal", settings.get("buy_score_threshold", 60)))
 
-        if total_score >= buy_threshold and supply_gate_passed:
-            default_budget = float(settings.get("max_buy_budget_per_stock", 500000.0))
-            budget_val = budget if budget is not None else default_budget
-            atr_val = float(last["atr"]) if "atr" in last and not pd.isna(last["atr"]) else 0.0
+        is_recommended = bool(
+            total_score >= buy_threshold
+            and supply_gate_passed
+            and not disqualify_reason
+        )
 
-            qty = self.calculate_position_size(current_price, budget_val, atr_val=atr_val, settings=settings)
-            total_est = qty * current_price
+        if not is_recommended and not return_raw_eval:
+            return None
 
-            result = {
-                "code": code,
-                "name": name,
-                "current_price": current_price,
-                "change_rate": change_rate,
-                "score": total_score,
-                "trend_score": trend_score,
-                "supply_score": supply_score,
-                "momentum_score": momentum_score,
-                "futures_score": futures_score if (use_futures and has_futures) else None,
-                "has_futures": has_futures,
-                "market_basis": market_basis if (use_futures and has_futures) else None,
-                "oi_change": oi_change if (use_futures and has_futures) else None,
-                "is_contango": is_contango if (use_futures and has_futures) else None,
-                "futures_warning": futures_warning,
-                "supply_gate_passed": supply_gate_passed,
-                "adjusted_volume": adj_volume,
-                "vol_ma20": vol_ma20,
-                "vol_ratio": round(vol_ratio, 1),
-                "reasons": reasons,
-                "recommended_qty": qty,
-                "estimated_amount": total_est,
-                "rsi": round(float(rsi), 1) if not pd.isna(rsi) else None,
-                "ma5": round(ma5_val, 0),
-                "ma20": round(ma20_val, 0),
-                "ma60": round(float(last["ma60"]), 0) if not pd.isna(last["ma60"]) else 0.0,
-                "atr": round(atr_val, 0),
-                "market_regime": regime,
-                "buy_threshold": buy_threshold
-            }
+        default_budget = float(settings.get("max_buy_budget_per_stock", 500000.0))
+        budget_val = budget if budget is not None else default_budget
+        atr_val = float(last["atr"]) if "atr" in last and not pd.isna(last["atr"]) else 0.0
 
-            if is_additional_buy:
-                result["is_additional_buy"] = True
-                result["buy_type"] = "추가매수"
-                result["reasons"] = ["📌 현재 보유 종목 추가매수 추천"] + reasons
-            else:
-                result["is_additional_buy"] = False
-                result["buy_type"] = "신규매수"
+        qty = self.calculate_position_size(current_price, budget_val, atr_val=atr_val, settings=settings)
+        total_est = qty * current_price
 
-            return result
+        result = {
+            "code": code,
+            "name": name,
+            "current_price": current_price,
+            "change_rate": change_rate,
+            "score": total_score,
+            "trend_score": trend_score,
+            "supply_score": supply_score,
+            "momentum_score": momentum_score,
+            "futures_score": futures_score if (use_futures and has_futures) else None,
+            "has_futures": has_futures,
+            "market_basis": market_basis if (use_futures and has_futures) else None,
+            "oi_change": oi_change if (use_futures and has_futures) else None,
+            "is_contango": is_contango if (use_futures and has_futures) else None,
+            "futures_warning": futures_warning,
+            "supply_gate_passed": supply_gate_passed,
+            "adjusted_volume": adj_volume,
+            "vol_ma20": vol_ma20,
+            "vol_ratio": round(vol_ratio, 1),
+            "reasons": reasons,
+            "recommended_qty": qty,
+            "estimated_amount": total_est,
+            "rsi": round(float(rsi), 1) if not pd.isna(rsi) else None,
+            "ma5": round(ma5_val, 0),
+            "ma20": round(ma20_val, 0),
+            "ma60": round(float(last["ma60"]), 0) if not pd.isna(last["ma60"]) else 0.0,
+            "atr": round(atr_val, 0),
+            "market_regime": regime,
+            "buy_threshold": buy_threshold,
+            "is_recommended": is_recommended,
+            "disqualify_reason": disqualify_reason or (f"매수 점수 기준 미달 ({total_score}점 < {buy_threshold}점)" if not is_recommended else None)
+        }
 
-        return None
+        if is_additional_buy:
+            result["is_additional_buy"] = True
+            result["buy_type"] = "추가매수"
+            result["reasons"] = ["📌 현재 보유 종목 추가매수 추천"] + reasons
+        else:
+            result["is_additional_buy"] = False
+            result["buy_type"] = "신규매수"
+
+        return result
 
     def evaluate_sell(
         self,

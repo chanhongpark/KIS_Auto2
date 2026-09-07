@@ -155,6 +155,37 @@ class TestFuturesScoring(unittest.TestCase):
         self.assertEqual(res["score"], expected)
         self.assertTrue(any("미상장 종목" in r for r in res["reasons"]))
 
+    def test_return_raw_eval_when_not_recommended(self):
+        """매수 기준 미달 시 return_raw_eval=True로 점수 및 탈락 사유 확인 검증"""
+        settings = {
+            "use_futures_filter": True,
+            "buy_score_threshold": 95,  # 도달 불가능한 높은 컷오프
+            "market_regime_cutoff_normal": 95
+        }
+        # 1) 일반 호출 -> None 반환
+        res_normal = self.strategy.evaluate_buy(
+            df=self.df,
+            code="005930",
+            name="삼성전자",
+            settings=settings,
+            return_raw_eval=False
+        )
+        self.assertIsNone(res_normal)
+
+        # 2) return_raw_eval=True -> 점수와 탈락 사유가 포함된 dict 반환
+        res_raw = self.strategy.evaluate_buy(
+            df=self.df,
+            code="005930",
+            name="삼성전자",
+            settings=settings,
+            return_raw_eval=True
+        )
+        self.assertIsNotNone(res_raw)
+        self.assertFalse(res_raw["is_recommended"])
+        self.assertIn("disqualify_reason", res_raw)
+        self.assertGreater(res_raw["score"], 0)
+        self.assertIn("기준 미달", res_raw["disqualify_reason"])
+
 
 if __name__ == "__main__":
     unittest.main()

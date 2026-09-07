@@ -69,6 +69,12 @@ def render_overview_tab(api, screener, summary, holdings, proposals, holding_cod
         buy_list = proposals.get("buy_proposals", [])
         if not buy_list:
             st.info("현재 매수 조건을 통과한 추천 종목이 없습니다. (100점 만점 기준 60점 이상 & 수급 필수 게이트 충족 필요)")
+            top_cands = proposals.get("top_candidates", [])
+            if top_cands:
+                st.markdown("**👀 [관망 후보 Top 3 (매수 추천 아님)]**")
+                for idx, c in enumerate(top_cands[:3], 1):
+                    disq = c.get('disqualify_reason', '기준 미달')
+                    st.caption(f"**{idx}위. {c['name']} ({c['code']})** 현재가: `{c['current_price']:,.0f}원` | **{c['score']}점** (사유: {disq})")
         else:
             for b in buy_list[:3]:
                 buy_tag = "🔄 추가매수" if b.get("code") in holding_codes else "🆕 신규매수"

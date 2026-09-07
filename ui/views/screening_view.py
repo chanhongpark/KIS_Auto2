@@ -24,7 +24,40 @@ def render_screener(api, screener, proposals, holding_codes):
 
     buy_list = proposals.get("buy_proposals", [])
     if not buy_list:
-        st.info("현재 추천된 매수 종목이 없습니다. 상단의 **[🔄 즉시 종가 스크리닝 실행]** 버튼을 누르거나 15:15 자동 스케줄을 기다려주세요. (총점 60점 이상 & 수급 필수 게이트 충족 종목 표시)")
+        st.info("💡 오늘 매수 추천 기준(총점 60점 이상 & 수급 필수 게이트 충족)에 도달한 종목은 없습니다.")
+        top_candidates = proposals.get("top_candidates", [])
+        if top_candidates:
+            st.markdown("---")
+            st.subheader("👀 [관망 후보 Top 3] 상대 점수 상위 종목 (※ 매수 추천 아님)")
+            st.caption("매수 조건(게이트 또는 컷오프)을 모두 만족하지는 못했으나, 분석 대상 종목 중 기술적/수급 점수가 가장 높았던 상위 3개 항목입니다. 주문 발주 대상이 아니며 단순 관망 및 시장 흐름 파악용입니다.")
+            for idx, item in enumerate(top_candidates, 1):
+                with st.container():
+                    col_info, col_score = st.columns([3.5, 1.0])
+                    with col_info:
+                        st.markdown(f"#### {idx}위. {item['name']} <small style='color:#64748b'>({item['code']})</small>", unsafe_allow_html=True)
+                        st.write(f"**현재가:** `{item['current_price']:,.0f}원` ({item.get('change_rate', 0.0):+.2f}%)")
+                        
+                        badges = [f"<span class='score-badge' style='background:#334155; color:#f1f5f9; font-weight:bold;'>종합 {item['score']}점</span>"]
+                        if "trend_score" in item:
+                            badges.append(f"<span class='score-badge'>추세 {item['trend_score']}/30</span>")
+                        if "supply_score" in item:
+                            badges.append(f"<span class='score-badge'>수급 {item['supply_score']}/25</span>")
+                        if "momentum_score" in item:
+                            badges.append(f"<span class='score-badge'>모멘텀 {item['momentum_score']}/25</span>")
+                        if item.get("futures_score") is not None:
+                            basis_tag = "콘탱고" if item.get("is_contango") else "백워데이션"
+                            basis_val = item.get("market_basis", 0)
+                            badges.append(f"<span class='score-badge' style='background:#064e3b; border:1px solid #059669; color:#34d399;'>선물 {item['futures_score']}/20 ({basis_tag} {basis_val:+,.0f}원)</span>")
+                        elif item.get("has_futures") is False:
+                            badges.append("<span class='score-badge' style='background:#1e293b; border:1px solid #475569; color:#94a3b8;'>선물미상장</span>")
+                        st.markdown(" ".join(badges), unsafe_allow_html=True)
+                        
+                        disq = item.get("disqualify_reason")
+                        if disq:
+                            st.caption(f"⚠️ **미추천 사유:** <span style='color:#f87171;'>{disq}</span>", unsafe_allow_html=True)
+                    with col_score:
+                        st.metric("종합 점수", f"{item['score']}점")
+                st.divider()
     else:
         for idx, item in enumerate(buy_list):
             with st.container():

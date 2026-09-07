@@ -69,7 +69,8 @@ class BaseStrategy(ABC):
         market_regime: Optional[Dict[str, Any]] = None,
         settings: Optional[Dict[str, Any]] = None,
         is_in_cooldown: bool = False,
-        futures_data: Optional[Dict[str, Any]] = None
+        futures_data: Optional[Dict[str, Any]] = None,
+        return_raw_eval: bool = False
     ) -> Optional[Dict[str, Any]]:
         """
         매수 신호 평가 → 매수 추천 dict 반환

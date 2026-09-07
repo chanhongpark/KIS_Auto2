@@ -107,7 +107,8 @@ class ReboundStrategy(BaseStrategy):
         market_regime: Optional[Dict[str, Any]] = None,
         settings: Optional[Dict[str, Any]] = None,
         is_in_cooldown: bool = False,
-        futures_data: Optional[Dict[str, Any]] = None
+        futures_data: Optional[Dict[str, Any]] = None,
+        return_raw_eval: bool = False
     ) -> Optional[Dict[str, Any]]:
         """
         52주 낙폭과대 바닥 반등 매수 평가

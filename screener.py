@@ -149,7 +149,8 @@ class StockScreener:
         market_regime: Optional[Dict[str, Any]] = None,
         current_date: Optional[str] = None,
         use_file_cooldown: bool = False,
-        futures_data: Optional[Dict[str, Any]] = None
+        futures_data: Optional[Dict[str, Any]] = None,
+        return_raw_eval: bool = False
     ) -> Optional[Dict[str, Any]]:
         """기술적 보조지표 DataFrame을 바탕으로 활성화된 모든 전략 매수 신호 평가"""
         in_cooldown = self._is_in_cooldown(code, current_date=current_date, use_file_cooldown=use_file_cooldown)
@@ -167,7 +168,8 @@ class StockScreener:
                     market_regime=market_regime,
                     settings=config.CURRENT_SETTINGS,
                     is_in_cooldown=in_cooldown,
-                    futures_data=futures_data
+                    futures_data=futures_data,
+                    return_raw_eval=return_raw_eval
                 )
                 if res:
                     res["strategy"] = strat.name
@@ -182,21 +184,29 @@ class StockScreener:
         if not results:
             return None
 
-        if len(results) == 1:
+        # 추천 결과와 미추천(관망) 결과 구분
+        recommended_results = [r for r in results if r.get("is_recommended", True)]
+        if return_raw_eval and not recommended_results:
+            results.sort(key=lambda x: x.get("score", 0), reverse=True)
             return results[0]
+
+        target_results = recommended_results if recommended_results else results
+        if len(target_results) == 1:
+            return target_results[0]
 
         # 복수 전략에서 동시 추천된 경우 (슈퍼 시그널)
         # 가장 높은 점수를 기본으로 취하고 보너스 가산점 및 사유 병합
-        results.sort(key=lambda x: x.get("score", 0), reverse=True)
-        best = results[0]
-        combined_names = " & ".join(r.get("strategy_display_name", r.get("strategy_name")) for r in results)
+        target_results.sort(key=lambda x: x.get("score", 0), reverse=True)
+        best = target_results[0]
+        combined_names = " & ".join(r.get("strategy_display_name", r.get("strategy_name")) for r in target_results)
         
         # 보너스 점수 +10점 부여
-        best["score"] = best.get("score", 0) + 10
-        best["strategy"] = best.get("strategy", best.get("strategy_name", "multi"))
-        best["strategy_display_name"] = combined_names
-        best["is_multi_strategy"] = True
-        best["reasons"] = [f"🌟 [슈퍼 시그널] {combined_names} 복수 알고리즘 동시 포착 (+10점)"] + best.get("reasons", [])
+        if best.get("is_recommended", True):
+            best["score"] = best.get("score", 0) + 10
+            best["strategy"] = best.get("strategy", best.get("strategy_name", "multi"))
+            best["strategy_display_name"] = combined_names
+            best["is_multi_strategy"] = True
+            best["reasons"] = [f"🌟 [슈퍼 시그널] {combined_names} 복수 알고리즘 동시 포착 (+10점)"] + best.get("reasons", [])
         return best
 
     def evaluate_buy_signals(
@@ -205,7 +215,8 @@ class StockScreener:
         name: str,
         held_codes: Optional[Set[str]] = None,
         is_intraday: bool = True,
-        market: str = "KOSPI"
+        market: str = "KOSPI",
+        return_raw_eval: bool = False
     ) -> Optional[Dict[str, Any]]:
         """라이브 환경에서 API 데이터 수집 후 매수 신호 평가"""
         candles = self.api.get_daily_chart(code, count=65)
@@ -250,7 +261,8 @@ class StockScreener:
             held_codes=held_codes,
             market_regime=market_regime,
             use_file_cooldown=False,
-            futures_data=futures_data
+            futures_data=futures_data,
+            return_raw_eval=return_raw_eval
         )
 
     # =========================================================================
@@ -405,6 +417,7 @@ class StockScreener:
 
         watchlist = config.CURRENT_SETTINGS.get("watchlist", [])
         buy_proposals = []
+        unqualified_candidates = []
         for stock in watchlist:
             code = stock.get("code")
             name = stock.get("name")
@@ -414,15 +427,24 @@ class StockScreener:
                     code, name,
                     held_codes=held_codes,
                     is_intraday=True,
-                    market=market
+                    market=market,
+                    return_raw_eval=True
                 )
                 if res:
-                    buy_proposals.append(res)
+                    if res.get("is_recommended", True):
+                        buy_proposals.append(res)
+                    else:
+                        unqualified_candidates.append(res)
             except Exception as e:
                 self.logger.warning(f"[{name}({code})] 종가 스크리닝 중 예외: {e}")
 
         buy_proposals.sort(key=lambda x: x["score"], reverse=True)
         top_buy_proposals = buy_proposals
+
+        top_candidates = []
+        if not top_buy_proposals:
+            unqualified_candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
+            top_candidates = unqualified_candidates[:3]
 
         sell_proposals = []
         for holding in holdings:
@@ -440,14 +462,15 @@ class StockScreener:
             "generated_at": now_str(),
             "screening_type": "CLOSING_BUY_1515",
             "buy_proposals": top_buy_proposals,
+            "top_candidates": top_candidates,
             "sell_proposals": merged_sell_proposals,
             "holdings_count": len(holdings),
             "status": "READY"
         }
 
         self.save_proposals(proposals_data)
-        self.logger.info(f"15:15 종가 스크리닝 완료: 매수 추천 {len(top_buy_proposals)}건, 매도 추천 {len(sell_proposals)}건")
-        self._notify_screening_summary(top_buy_proposals, sell_proposals, len(holdings))
+        self.logger.info(f"15:15 종가 스크리닝 완료: 매수 추천 {len(top_buy_proposals)}건 (상위 관망 후보 {len(top_candidates)}건), 매도 추천 {len(sell_proposals)}건")
+        self._notify_screening_summary(top_buy_proposals, sell_proposals, len(holdings), top_candidates=top_candidates)
 
         return proposals_data
 
@@ -619,7 +642,8 @@ class StockScreener:
         self,
         buy_list: List[Dict[str, Any]],
         sell_list: List[Dict[str, Any]],
-        holdings_count: int
+        holdings_count: int,
+        top_candidates: Optional[List[Dict[str, Any]]] = None
     ) -> None:
         """스크리닝 요약 알림 전송"""
         try:
@@ -628,7 +652,8 @@ class StockScreener:
                 sell_count=len(sell_list),
                 holdings_count=holdings_count,
                 buy_list=buy_list,
-                sell_list=sell_list
+                sell_list=sell_list,
+                top_candidates=top_candidates
             )
         except Exception as e:
             self.logger.warning(f"스크리닝 요약 알림 전송 실패: {e}")
@@ -649,6 +674,7 @@ class StockScreener:
         return safe_load_json(PROPOSALS_FILE, default={
             "generated_at": "-",
             "buy_proposals": [],
+            "top_candidates": [],
             "sell_proposals": [],
             "holdings_count": 0,
             "status": "EMPTY"
