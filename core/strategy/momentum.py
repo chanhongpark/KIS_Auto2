@@ -181,6 +181,19 @@ class MomentumStrategy(BaseStrategy):
         {"key": "momentum_rsi_momentum_score", "label": "RSI 상승 탄력 점수", "type": "number",
          "default": 10, "min": 5, "max": 20, "step": 1,
          "description": "RSI 상승 탄력 유지 구간 시 점수", "category": "strategy"},
+        {"key": "use_investor_filter", "label": "메이저 수급 반영 활성화", "type": "toggle",
+         "default": True, "description": "외인·기관 순매수 가점 및 쌍끌이 순매도 탈락 필터", "category": "strategy"},
+        {"key": "investor_double_buy_score", "label": "쌍끌이 순매수 가점", "type": "number",
+         "default": 8, "min": 0, "max": 15, "step": 1,
+         "description": "외인·기관 동반 순매수 시 가산점", "category": "strategy"},
+        {"key": "investor_single_buy_score", "label": "단독 순매수 가점", "type": "number",
+         "default": 4, "min": 0, "max": 10, "step": 1,
+         "description": "외인 또는 기관 단독 순매수 시 가산점", "category": "strategy"},
+        {"key": "use_volume_power_gate", "label": "체결강도 안전 게이트 활성화", "type": "toggle",
+         "default": True, "description": "15:15 진입 시점 당일 실시간 체결강도 검증", "category": "strategy"},
+        {"key": "min_volume_power", "label": "최소 체결강도 기준 (%)", "type": "number",
+         "default": 110.0, "min": 50.0, "max": 200.0, "step": 5.0,
+         "description": "매수 추천을 위한 최소 체결강도 (%)", "category": "strategy"},
     ]
 
     def evaluate_buy(
@@ -194,7 +207,11 @@ class MomentumStrategy(BaseStrategy):
         settings: Optional[Dict[str, Any]] = None,
         is_in_cooldown: bool = False,
         futures_data: Optional[Dict[str, Any]] = None,
-        return_raw_eval: bool = False
+        return_raw_eval: bool = False,
+        extra_data: Optional[Dict[str, Any]] = None,
+        investor_data: Optional[Dict[str, Any]] = None,
+        volume_power: Optional[float] = None,
+        **kwargs
     ) -> Optional[Dict[str, Any]]:
         """
         계산된 기술적 보조지표 DataFrame을 바탕으로 매수 점수 및 안전/수급/눌림목 게이트 평가
@@ -202,6 +219,22 @@ class MomentumStrategy(BaseStrategy):
         """
         if df is None or len(df) < 20:
             return None
+
+        # extra_data 내부 데이터 추출 호환성
+        if isinstance(extra_data, dict):
+            investor_data = investor_data or extra_data.get("investor_trend")
+            if volume_power is None and "volume_power" in extra_data:
+                volume_power = extra_data.get("volume_power")
+
+        # Mock 및 비정상 타입 방어 변환
+        if volume_power is not None and not isinstance(volume_power, (int, float)):
+            try:
+                volume_power = float(volume_power)
+            except Exception:
+                volume_power = None
+
+        if investor_data is not None and not isinstance(investor_data, dict):
+            investor_data = None
 
         regime = (market_regime or {}).get("regime", "BULL")
         # 전략별 고유 설정을 전역 설정에 병합한 후, 시장 국면 프리셋 적용
@@ -278,6 +311,35 @@ class MomentumStrategy(BaseStrategy):
                     return None
 
         # -------------------------------------------------------------
+        # [안전 게이트 3] 체결강도 필터 (Step 3: 당일 실시간 매수세 우위 검증)
+        # -------------------------------------------------------------
+        use_vp_gate = settings.get("use_volume_power_gate", True)
+        min_vp = float(settings.get("min_volume_power", 110.0))
+        if use_vp_gate and isinstance(volume_power, (int, float)) and volume_power > 0:
+            if volume_power < min_vp:
+                disqualify_reason = f"체결강도 미달 ({volume_power:.1f}% < {min_vp:.0f}%)"
+                if not return_raw_eval:
+                    return None
+            else:
+                reasons.append(f"💪 실시간 체결강도 우세 ({volume_power:.1f}% >= {min_vp:.0f}%)")
+
+        # -------------------------------------------------------------
+        # [안전 게이트 4] 메이저 수급 필터 (Step 1: 외인/기관 쌍끌이 순매도 종목 매수 배제)
+        # -------------------------------------------------------------
+        use_investor = settings.get("use_investor_filter", True)
+        if use_investor and isinstance(investor_data, dict):
+            try:
+                frgn_qty = int(investor_data.get("foreign_net_buy_qty", 0) or 0)
+                orgn_qty = int(investor_data.get("institution_net_buy_qty", 0) or 0)
+                is_double_selling = investor_data.get("is_double_selling", (frgn_qty < 0 and orgn_qty < 0))
+                if is_double_selling:
+                    disqualify_reason = f"외인·기관 쌍끌이 순매도 종목 매수 배제 (외인 {frgn_qty:,}주, 기관 {orgn_qty:,}주)"
+                    if not return_raw_eval:
+                        return None
+            except Exception:
+                pass
+
+        # -------------------------------------------------------------
         # 1. 추세군 점수 산출 (그룹 상한: 최대 30점)
         # -------------------------------------------------------------
         raw_trend_score = 0
@@ -330,6 +392,21 @@ class MomentumStrategy(BaseStrategy):
                 if (adj_volume / vol_ma20) >= 2.0:
                     raw_supply_score += supply_bonus_score
                     reasons.append(f"⚡ 대량 거래량 폭발 (200% 이상) (+{supply_bonus_score}점)")
+
+                # Step 1: 메이저 외인/기관 순매수 가산점
+                if use_investor and investor_data:
+                    frgn_qty = int(investor_data.get("foreign_net_buy_qty", 0) or 0)
+                    orgn_qty = int(investor_data.get("institution_net_buy_qty", 0) or 0)
+                    is_double_buying = investor_data.get("is_double_buying", (frgn_qty > 0 and orgn_qty > 0))
+                    if is_double_buying:
+                        bonus = int(settings.get("investor_double_buy_score", 8))
+                        raw_supply_score += bonus
+                        reasons.append(f"💎 외인·기관 쌍끌이 순매수 유입 (외인 {frgn_qty:+,}주, 기관 {orgn_qty:+,}주) (+{bonus}점)")
+                    elif frgn_qty > 0 or orgn_qty > 0:
+                        bonus = int(settings.get("investor_single_buy_score", 4))
+                        raw_supply_score += bonus
+                        buyer = "외국인" if frgn_qty > 0 else "기관"
+                        reasons.append(f"💎 메이저 수급({buyer}) 순매수 유입 (외인 {frgn_qty:+,}주, 기관 {orgn_qty:+,}주) (+{bonus}점)")
 
                 cap_vol = int(settings.get("score_cap_volume", 25))
                 supply_score = min(min(25, cap_vol), raw_supply_score)
@@ -482,6 +559,8 @@ class MomentumStrategy(BaseStrategy):
             "atr": round(atr_val, 0),
             "market_regime": regime,
             "buy_threshold": buy_threshold,
+            "volume_power": round(float(volume_power), 1) if volume_power is not None else None,
+            "investor_trend": investor_data,
             "is_recommended": is_recommended,
             "disqualify_reason": disqualify_reason or (f"매수 점수 기준 미달 ({total_score}점 < {buy_threshold}점)" if not is_recommended else None)
         }

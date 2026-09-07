@@ -150,7 +150,10 @@ class StockScreener:
         current_date: Optional[str] = None,
         use_file_cooldown: bool = False,
         futures_data: Optional[Dict[str, Any]] = None,
-        return_raw_eval: bool = False
+        return_raw_eval: bool = False,
+        investor_data: Optional[Dict[str, Any]] = None,
+        volume_power: Optional[float] = None,
+        extra_data: Optional[Dict[str, Any]] = None
     ) -> Optional[Dict[str, Any]]:
         """기술적 보조지표 DataFrame을 바탕으로 활성화된 모든 전략 매수 신호 평가"""
         in_cooldown = self._is_in_cooldown(code, current_date=current_date, use_file_cooldown=use_file_cooldown)
@@ -169,7 +172,10 @@ class StockScreener:
                     settings=config.CURRENT_SETTINGS,
                     is_in_cooldown=in_cooldown,
                     futures_data=futures_data,
-                    return_raw_eval=return_raw_eval
+                    return_raw_eval=return_raw_eval,
+                    investor_data=investor_data,
+                    volume_power=volume_power,
+                    extra_data=extra_data
                 )
                 if res:
                     res["strategy"] = strat.name
@@ -256,13 +262,31 @@ class StockScreener:
             except Exception as e:
                 self.logger.warning(f"[{name}({code})] 주식선물 수급 조회 예외: {e}")
 
+        # Step 1: 당일 투자자별 매매동향 (외인/기관 순매수) 조회
+        investor_data = None
+        if config.CURRENT_SETTINGS.get("use_investor_filter", True):
+            try:
+                investor_data = self.api.get_investor_trend(code)
+            except Exception as e:
+                self.logger.warning(f"[{name}({code})] 투자자 매매동향 조회 예외: {e}")
+
+        # Step 3: 당일 실시간 체결강도 조회
+        volume_power = None
+        if config.CURRENT_SETTINGS.get("use_volume_power_gate", True):
+            try:
+                volume_power = self.api.get_execution_strength(code)
+            except Exception as e:
+                self.logger.warning(f"[{name}({code})] 당일 체결강도 조회 예외: {e}")
+
         return self.evaluate_buy_signals_from_df(
             df, code, name,
             held_codes=held_codes,
             market_regime=market_regime,
             use_file_cooldown=False,
             futures_data=futures_data,
-            return_raw_eval=return_raw_eval
+            return_raw_eval=return_raw_eval,
+            investor_data=investor_data,
+            volume_power=volume_power
         )
 
     # =========================================================================
@@ -414,8 +438,33 @@ class StockScreener:
         balance = self.api.get_account_balance()
         holdings = balance.get("holdings", [])
         held_codes = {h.get("code") for h in holdings if h.get("code")}
+        watchlist = list(config.CURRENT_SETTINGS.get("watchlist", []))
 
-        watchlist = config.CURRENT_SETTINGS.get("watchlist", [])
+        # Step 2: 당일 거래대금 상위(Top 30) 유동성 주도주 동적 유니버스 확장
+        if config.CURRENT_SETTINGS.get("dynamic_universe_enabled", True):
+            top_n = int(config.CURRENT_SETTINGS.get("dynamic_universe_top_n", 30))
+            try:
+                top_traded = self.api.get_top_traded_stocks(count=top_n)
+                existing_codes = {s.get("code") for s in watchlist if s.get("code")}
+                added_count = 0
+                for item in top_traded:
+                    code = item.get("code")
+                    name = item.get("name")
+                    if code and code not in existing_codes:
+                        existing_codes.add(code)
+                        watchlist.append({
+                            "code": code,
+                            "name": name,
+                            "market": "KOSPI"
+                        })
+                        if hasattr(config, "STOCK_NAMES"):
+                            config.STOCK_NAMES[code] = name
+                        added_count += 1
+                if added_count > 0:
+                    self.logger.info(f"⚡ 당일 거래대금 상위 주도주 {added_count}개 종목 스크리닝 유니버스 동적 편입 (총 {len(watchlist)}종목)")
+            except Exception as e:
+                self.logger.warning(f"동적 유니버스 확장 중 예외: {e}")
+
         buy_proposals = []
         unqualified_candidates = []
         for stock in watchlist:

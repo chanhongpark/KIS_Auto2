@@ -347,6 +347,142 @@ class KISApiClient:
             self.logger.warning(f"지수선물({iscd}) 시세 조회 실패: {e}")
         return {"success": False}
 
+    def get_investor_trend(self, stock_code: str) -> Dict[str, Any]:
+        """
+        종목별 투자자 매매동향 조회 (FHKST01010900)
+        - 당일 외국인/기관/개인 순매수 수량 및 거래대금 반환
+        """
+        try:
+            url = f"{self.url_base}/uapi/domestic-stock/v1/quotations/inquire-investor"
+            headers = self._get_headers("FHKST01010900")
+            params = {
+                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_INPUT_ISCD": stock_code
+            }
+            res = self._request_with_retry("GET", url, headers=headers, params=params, timeout=5)
+            data = res.json()
+            output = data.get("output", [])
+            if output and isinstance(output, list):
+                today_data = output[0]
+                frgn_qty = int(today_data.get("frgn_ntby_qty", 0) or 0)
+                orgn_qty = int(today_data.get("orgn_ntby_qty", 0) or 0)
+                prsn_qty = int(today_data.get("prsn_ntby_qty", 0) or 0)
+                frgn_pbmn = int(today_data.get("frgn_ntby_tr_pbmn", 0) or 0)
+                orgn_pbmn = int(today_data.get("orgn_ntby_tr_pbmn", 0) or 0)
+                prsn_pbmn = int(today_data.get("prsn_ntby_tr_pbmn", 0) or 0)
+                return {
+                    "success": True,
+                    "stock_code": stock_code,
+                    "date": today_data.get("stck_bsop_date", ""),
+                    "foreign_net_buy_qty": frgn_qty,
+                    "institution_net_buy_qty": orgn_qty,
+                    "individual_net_buy_qty": prsn_qty,
+                    "foreign_net_buy_amount": frgn_pbmn,
+                    "institution_net_buy_amount": orgn_pbmn,
+                    "individual_net_buy_amount": prsn_pbmn,
+                    "is_double_buying": frgn_qty > 0 and orgn_qty > 0,
+                    "is_double_selling": frgn_qty < 0 and orgn_qty < 0,
+                }
+        except Exception as e:
+            self.logger.warning(f"[{stock_code}] 투자자 매매동향 조회 실패: {e}")
+        return {
+            "success": False,
+            "stock_code": stock_code,
+            "foreign_net_buy_qty": 0,
+            "institution_net_buy_qty": 0,
+            "individual_net_buy_qty": 0,
+            "foreign_net_buy_amount": 0,
+            "institution_net_buy_amount": 0,
+            "individual_net_buy_amount": 0,
+            "is_double_buying": False,
+            "is_double_selling": False
+        }
+
+    def get_top_traded_stocks(self, count: int = 30) -> List[Dict[str, Any]]:
+        """
+        당일 거래대금 상위 종목 조회 (FHPST01710000, FID_BLNG_CLS_CODE='3')
+        - ETF, ETN, SPAC, 우선주를 제외한 일반 보통주 위주 필터링
+        """
+        results = []
+        try:
+            url = f"{self.url_base}/uapi/domestic-stock/v1/quotations/volume-rank"
+            headers = self._get_headers("FHPST01710000")
+            params = {
+                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_COND_SCR_DIV_CODE": "20171",
+                "FID_INPUT_ISCD": "0000",
+                "FID_DIV_CLS_CODE": "1",  # 보통주
+                "FID_BLNG_CLS_CODE": "3", # 거래대금순
+                "FID_TRGT_CLS_CODE": "111111111",
+                "FID_TRGT_EXLS_CLS_CODE": "000000",
+                "FID_INPUT_PRICE_1": "",
+                "FID_INPUT_PRICE_2": "",
+                "FID_VOL_CNT": "",
+                "FID_INPUT_DATE_1": ""
+            }
+            res = self._request_with_retry("GET", url, headers=headers, params=params, timeout=5)
+            data = res.json()
+            output = data.get("output", [])
+
+            etf_keywords = [
+                "KODEX", "TIGER", "ACE", "RISE", "SOL", "KOSEF", "PLUS", "KBSTAR",
+                "HANARO", "TIMEFOLIO", "WOORI", "WON", "HERO", "ETN", "스팩"
+            ]
+
+            for item in output:
+                code = item.get("mksc_shrn_iscd", "")
+                name = item.get("hts_kor_isnm", "")
+                if not code or not name:
+                    continue
+                # 우선주 제외 (코드 끝자리 0이 아닌 경우 제외)
+                if not code.endswith("0"):
+                    continue
+                # ETF/ETN/스팩 제외
+                if any(kw in name for kw in etf_keywords):
+                    continue
+
+                pbmn = int(item.get("acml_tr_pbmn", 0) or 0)
+                vol = int(item.get("acml_vol", 0) or 0)
+                price = float(item.get("stck_prpr", 0.0) or 0.0)
+                change_rate = float(item.get("prdy_ctrt", 0.0) or 0.0)
+
+                results.append({
+                    "code": code,
+                    "name": name,
+                    "price": price,
+                    "change_rate": change_rate,
+                    "volume": vol,
+                    "trade_amount": pbmn,
+                })
+                if len(results) >= count:
+                    break
+        except Exception as e:
+            self.logger.warning(f"거래대금 상위 종목 조회 실패: {e}")
+        return results
+
+    def get_execution_strength(self, stock_code: str) -> Optional[float]:
+        """
+        당일 실시간 체결강도 조회 (FHKST01010300)
+        - 체결강도 (%): 100% 초과시 매수세 우세
+        """
+        try:
+            url = f"{self.url_base}/uapi/domestic-stock/v1/quotations/inquire-ccnl"
+            headers = self._get_headers("FHKST01010300")
+            params = {
+                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_INPUT_ISCD": stock_code
+            }
+            res = self._request_with_retry("GET", url, headers=headers, params=params, timeout=5)
+            data = res.json()
+            output = data.get("output", [])
+            if output and isinstance(output, list):
+                val = output[0].get("tday_rltv")
+                if val is not None:
+                    return float(val)
+        except Exception as e:
+            self.logger.warning(f"[{stock_code}] 당일 체결강도 조회 실패: {e}")
+        return None
+
     def get_daily_chart(self, stock_code: str, period: str = "D", count: int = 60) -> List[Dict[str, Any]]:
         """일별 차트/시세 데이터 조회 (OHLCV)"""
         end_date = today().strftime("%Y%m%d")

@@ -158,6 +158,15 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "score_cap_futures": 20,                # 선행 파생수급군 최대 점수 상한
     "buy_score_threshold": 60,              # 매수 추천 최소 종합 점수 (100점 만점 기준 60점 이상 추천)
 
+    # --- 고도화 1~3단계 설정 (메이저 수급, 동적 유니버스, 체결강도) ---
+    "use_investor_filter": True,             # 외인/기관 메이저 수급 반영 및 쌍끌이 순매도 필터
+    "investor_double_buy_score": 8,          # 외인·기관 쌍끌이 순매수 가점 (+8점)
+    "investor_single_buy_score": 4,          # 외인 또는 기관 단독 순매수 가점 (+4점)
+    "dynamic_universe_enabled": True,        # 당일 거래대금 상위 주도주 동적 유니버스 확장
+    "dynamic_universe_top_n": 30,            # 거래대금 상위 N개 탐색
+    "use_volume_power_gate": True,           # 15:15 체결강도 안전 게이트 활성화 여부
+    "min_volume_power": 110.0,               # 최소 체결강도 기준 (110.0%)
+
     # --- 실시간 봉 반영 설정 ---
     "use_realtime_candle": False,           # 실시간 현재가를 일봉에 반영할지 여부 (False: 완성봉만 사용)
 

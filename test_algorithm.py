@@ -166,5 +166,89 @@ class TestTradingAlgorithm(unittest.TestCase):
         if res_tech and "데드크로스" in res_tech.get("sell_type", ""):
             self.assertEqual(res_tech["sell_ratio"], 1.0)
 
+    def test_investor_trend_scoring_and_double_selling_rejection(self):
+        """Step 1: 외인/기관 메이저 수급 가점 및 쌍끌이 순매도 탈락 필터 검증"""
+        candles = self.generate_dummy_candles(65, trend="up", vol=100000)
+        # 당일 거래량을 1.5배로 설정하여 수급 게이트 통과 유도
+        candles[-1]["volume"] = 150000
+        df = self.screener.calculate_technical_indicators(candles, is_intraday=True)
+
+        # 1. 외인+기관 쌍끌이 순매도 케이스 -> 탈락(disqualify_reason) 검증
+        double_selling_investor = {
+            "foreign_net_buy_qty": -50000,
+            "institution_net_buy_qty": -30000,
+            "is_double_selling": True,
+            "is_double_buying": False
+        }
+        res_reject = self.screener.evaluate_buy_signals_from_df(
+            df=df, code="005930", name="삼성전자",
+            investor_data=double_selling_investor,
+            return_raw_eval=True
+        )
+        self.assertIsNotNone(res_reject)
+        self.assertFalse(res_reject["is_recommended"], "쌍끌이 순매도 종목은 매수 추천에서 배제되어야 합니다.")
+        self.assertIn("쌍끌이 순매도", res_reject.get("disqualify_reason", ""))
+
+        # 2. 외인+기관 쌍끌이 순매수 케이스 -> +8점 보너스 가산 검증
+        double_buying_investor = {
+            "foreign_net_buy_qty": 50000,
+            "institution_net_buy_qty": 30000,
+            "is_double_selling": False,
+            "is_double_buying": True
+        }
+        res_bonus = self.screener.evaluate_buy_signals_from_df(
+            df=df, code="005930", name="삼성전자",
+            investor_data=double_buying_investor,
+            return_raw_eval=True
+        )
+        self.assertIsNotNone(res_bonus)
+        has_double_buy_reason = any("쌍끌이 순매수" in r for r in res_bonus.get("reasons", []))
+        self.assertTrue(has_double_buy_reason, "쌍끌이 순매수 보너스 사유가 포함되어야 합니다.")
+
+    def test_volume_power_safety_gate(self):
+        """Step 3: 당일 실시간 체결강도(110% 이상) 안전 게이트 검증"""
+        candles = self.generate_dummy_candles(65, trend="up", vol=100000)
+        candles[-1]["volume"] = 150000
+        df = self.screener.calculate_technical_indicators(candles, is_intraday=True)
+
+        # 1. 체결강도 미달 (90% < 110%) -> 탈락 검증
+        res_low_vp = self.screener.evaluate_buy_signals_from_df(
+            df=df, code="005930", name="삼성전자",
+            volume_power=90.0,
+            return_raw_eval=True
+        )
+        self.assertIsNotNone(res_low_vp)
+        self.assertFalse(res_low_vp["is_recommended"], "체결강도 미달 종목은 매수 추천에서 배제되어야 합니다.")
+        self.assertIn("체결강도 미달", res_low_vp.get("disqualify_reason", ""))
+
+        # 2. 체결강도 충족 (125% >= 110%) -> 정상 통과
+        res_high_vp = self.screener.evaluate_buy_signals_from_df(
+            df=df, code="005930", name="삼성전자",
+            volume_power=125.0,
+            return_raw_eval=True
+        )
+        self.assertIsNotNone(res_high_vp)
+        has_vp_reason = any("체결강도 우세" in r for r in res_high_vp.get("reasons", []))
+        self.assertTrue(has_vp_reason, "체결강도 충족 사유가 포함되어야 합니다.")
+
+    def test_dynamic_universe_expansion(self):
+        """Step 2: 당일 거래대금 상위(Top 30) 유동성 주도주 동적 유니버스 확장 검증"""
+        self.mock_api.get_account_balance.return_value = {"holdings": []}
+        self.mock_api.get_top_traded_stocks.return_value = [
+            {"code": "999999", "name": "테스트대금1위", "trade_amount": 500000000000, "price": 50000, "change_rate": 5.0},
+            {"code": "888888", "name": "테스트대금2위", "trade_amount": 300000000000, "price": 30000, "change_rate": 3.0},
+        ]
+        self.screener.evaluate_buy_signals = MagicMock(return_value=None)
+        self.screener.evaluate_sell_signals = MagicMock(return_value=None)
+
+        result = self.screener.run_closing_price_screening()
+        self.assertIsNotNone(result)
+        # mock_api.get_top_traded_stocks가 호출되었는지 확인
+        self.mock_api.get_top_traded_stocks.assert_called_once()
+        # evaluate_buy_signals에 신규 유니버스 종목('999999', '888888')이 전달되었는지 확인
+        called_codes = [call.args[0] for call in self.screener.evaluate_buy_signals.call_args_list]
+        self.assertIn("999999", called_codes)
+        self.assertIn("888888", called_codes)
+
 if __name__ == "__main__":
     unittest.main()
