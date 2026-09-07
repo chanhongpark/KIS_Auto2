@@ -12,6 +12,29 @@ from time_utils import now_str, today
 from telegram_notifier import notifier
 from ui.styles import render_interactive_stock_chart
 
+def _extract_change_rate(h: dict) -> float:
+    """보유 종목 데이터에서 당일 등락률을 다중 필드 및 전일대비 직접 계산으로 안전 추출"""
+    cr = h.get("change_rate")
+    if cr is not None and cr != 0.0:
+        return float(cr)
+    raw_fltt = h.get("fltt_rt")
+    if raw_fltt and str(raw_fltt).strip() not in ("0", "0.0", "0.00", "0.00000000", ""):
+        try:
+            return float(raw_fltt)
+        except Exception:
+            pass
+    raw_prdy = h.get("prdy_ctrt")
+    if raw_prdy and str(raw_prdy).strip() not in ("0", "0.0", "0.00", ""):
+        try:
+            return float(raw_prdy)
+        except Exception:
+            pass
+    diff = float(h.get("diff_amt", 0.0) or 0.0)
+    curr = float(h.get("current_price", 0.0) or 0.0)
+    if diff != 0 and curr > 0 and (curr - diff) > 0:
+        return (diff / (curr - diff)) * 100.0
+    return 0.0
+
 def render_overview_tab(api, screener, summary, holdings, proposals, holding_codes):
     """자산 개요 탭 (Overview)"""
     st.markdown("""
@@ -98,7 +121,7 @@ def render_overview_tab(api, screener, summary, holdings, proposals, holding_cod
             pnl = float(h.get('profit_loss', 0))
             pnl_color = "#ff4d4f" if pnl > 0 else "#38bdf8" if pnl < 0 else "#94a3b8"
 
-            cr = float(h.get('change_rate') or h.get('fltt_rt') or h.get('prdy_ctrt') or 0.0)
+            cr = _extract_change_rate(h)
             cr_color = "#ff4d4f" if cr > 0 else "#38bdf8" if cr < 0 else "#94a3b8"
 
             pos_info = positions_state.get(h["code"], {})
@@ -381,7 +404,7 @@ def render_risk_tab(api, screener, holdings, proposals, realtime_detection_fragm
                 "보유수량": h["quantity"],
                 "매입평균가": h["avg_buy_price"],
                 "현재가": h["current_price"],
-                "당일등락률": float(h.get("change_rate") or h.get("fltt_rt") or h.get("prdy_ctrt") or 0.0),
+                "당일등락률": _extract_change_rate(h),
                 "수익률(%)": float(h.get("profit_rate", 0)),
                 "평가손익(원)": h.get("profit_loss", 0),
                 "평가금액(원)": h.get("eval_amount", 0),

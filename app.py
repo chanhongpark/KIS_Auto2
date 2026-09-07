@@ -34,17 +34,16 @@ apply_custom_styles()
 if "nav_page" not in st.session_state or st.session_state["nav_page"] not in ["dashboard", "screener", "backtest", "settings"]:
     st.session_state["nav_page"] = "dashboard"
 
-# 1회 스케줄러 및 API 초기화 (세션 상태 보존)
+# 1회 스케줄러 초기화 (백그라운드 스레드 중복 실행 방지)
 @st.cache_resource
-def init_system():
-    scheduler = start_scheduler()
-    api = KISApiClient()
-    token_ok = api.get_access_token()
-    if not token_ok:
-        st.warning("⚠️ KIS API 토큰 발급에 실패했습니다. 네트워크 연결 및 API 설정을 확인하세요.")
-    return scheduler, api
+def get_system_scheduler():
+    return start_scheduler()
 
-scheduler, api = init_system()
+scheduler = get_system_scheduler()
+api = KISApiClient()
+token_ok = api.get_access_token()
+if not token_ok:
+    st.warning("⚠️ KIS API 토큰 발급에 실패했습니다. 네트워크 연결 및 API 설정을 확인하세요.")
 screener = StockScreener(api)
 
 # 실시간 매도 신호 감지 fragment (독립적으로 60초마다 실행)
