@@ -337,11 +337,6 @@ class StockScreener:
                 highest_price=highest_price,
                 market_regime=market_regime
             )
-            if sell_res:
-                if sell_res.get("is_partial_take"):
-                    self._update_position_state(code, current_price, avg_buy_price, is_partial_take=True)
-                elif sell_res.get("sell_ratio") == 1.0:
-                    self._clear_position_state(code)
             return sell_res
 
         is_recent = self._is_recently_bought(code, days=2)
@@ -386,11 +381,6 @@ class StockScreener:
             highest_price=highest_price,
             market_regime=market_regime
         )
-        if sell_res:
-            if sell_res.get("is_partial_take"):
-                self._update_position_state(code, current_price, avg_buy_price, is_partial_take=True)
-            elif sell_res.get("sell_ratio") == 1.0:
-                self._clear_position_state(code)
         return sell_res
 
     # =========================================================================
@@ -433,14 +423,8 @@ class StockScreener:
             except Exception as e:
                 self.logger.warning(f"[{holding.get('name')}] 매도 분석 예외: {e}")
 
-        # 기존 매도 추천 유지: 아직 보유 중인 종목의 기존 매도 신호를 보존
-        # (1차 분할 익절 등은 1회만 감지되므로, 이후 재분석에서 사라지지 않도록 병합)
-        existing = self.load_proposals()
-        existing_sell = existing.get("sell_proposals", [])
-        existing_by_code = {s.get("code"): s for s in existing_sell if s.get("code") in held_codes}
-        for new_sell in sell_proposals:
-            existing_by_code[new_sell.get("code")] = new_sell
-        merged_sell_proposals = list(existing_by_code.values())
+        # 현재 잔고 기준 실시간 재평가된 매도 신호만 최신 반영 (조건 해제 종목 자동 제외 및 실시간 가격/손익 동기화)
+        merged_sell_proposals = sell_proposals
 
         proposals_data = {
             "generated_at": now_str(),
@@ -516,13 +500,8 @@ class StockScreener:
             except Exception as e:
                 self.logger.warning(f"[{holding.get('name')}] 매도 분석 예외: {e}")
 
-        # 기존 매도 추천 유지: 아직 보유 중인 종목의 기존 매도 신호를 보존
-        # (1차 분할 익절 등은 1회만 감지되므로, 이후 재분석에서 사라지지 않도록 병합)
-        existing_sell = existing.get("sell_proposals", [])
-        existing_by_code = {s.get("code"): s for s in existing_sell if s.get("code") in holding_codes}
-        for new_sell in sell_proposals:
-            existing_by_code[new_sell.get("code")] = new_sell
-        merged_sell_proposals = list(existing_by_code.values())
+        # 현재 실시간 잔고 기준 매도 신호만 최신 반영 (조건 해제 종목 자동 제외 및 최신 현재가/평가손익 동기화)
+        merged_sell_proposals = sell_proposals
 
         proposals_data = {
             "generated_at": now_str(),

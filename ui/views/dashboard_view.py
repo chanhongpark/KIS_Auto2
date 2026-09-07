@@ -319,6 +319,37 @@ def render_risk_tab(api, screener, holdings, proposals, realtime_detection_fragm
                             )
                             if res.get("rt_cd") == "0":
                                 st.success(f"✅ 매도 완료 (No. {res.get('order_no')})")
+                                
+                                # 포지션 상태 갱신 (실제 주문 체결/전송 시점에만 반영)
+                                try:
+                                    if sell_qty < s_item["holding_qty"] or s_item.get("is_partial_take"):
+                                        screener.position_tracker.update_position_state(
+                                            code=s_item["code"],
+                                            current_price=float(sell_target_price),
+                                            avg_buy_price=float(s_item["avg_buy_price"]),
+                                            is_partial_take=True
+                                        )
+                                    else:
+                                        screener.position_tracker.clear_position_state(s_item["code"])
+                                except Exception as e_pos:
+                                    screener.logger.warning(f"[{s_item['code']}] 포지션 상태 갱신 예외: {e_pos}")
+
+                                # 매도 완료된 종목 제안서에서 즉시 제거 및 저장
+                                try:
+                                    current_props = screener.load_proposals()
+                                    current_props["sell_proposals"] = [
+                                        s for s in current_props.get("sell_proposals", [])
+                                        if s.get("code") != s_item["code"]
+                                    ]
+                                    screener.save_proposals(current_props)
+                                    if "sell_proposals" in proposals:
+                                        proposals["sell_proposals"] = [
+                                            s for s in proposals["sell_proposals"]
+                                            if s.get("code") != s_item["code"]
+                                        ]
+                                except Exception as e_prop:
+                                    screener.logger.warning(f"[{s_item['code']}] 제안서 매도 목록 갱신 예외: {e_prop}")
+
                                 notifier.send_sell_success(
                                     name=s_item["name"],
                                     code=s_item["code"],
