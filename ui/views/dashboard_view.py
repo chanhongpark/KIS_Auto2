@@ -98,6 +98,9 @@ def render_overview_tab(api, screener, summary, holdings, proposals, holding_cod
             pnl = float(h.get('profit_loss', 0))
             pnl_color = "#ff4d4f" if pnl > 0 else "#38bdf8" if pnl < 0 else "#94a3b8"
 
+            cr = float(h.get('change_rate') or h.get('fltt_rt') or h.get('prdy_ctrt') or 0.0)
+            cr_color = "#ff4d4f" if cr > 0 else "#38bdf8" if cr < 0 else "#94a3b8"
+
             pos_info = positions_state.get(h["code"], {})
             strat = pos_info.get("strategy", "momentum")
             if "rebound" in strat:
@@ -116,6 +119,7 @@ def render_overview_tab(api, screener, summary, holdings, proposals, holding_cod
                     <td style="text-align:right;padding:10px 8px;color:#f8fafc;font-weight:600;">{h['quantity']:,}주</td>
                     <td style="text-align:right;padding:10px 8px;color:#cbd5e1;">{h['avg_buy_price']:,.0f}원</td>
                     <td style="text-align:right;padding:10px 8px;color:#f8fafc;font-weight:600;">{h['current_price']:,.0f}원</td>
+                    <td style="text-align:right;padding:10px 8px;color:{cr_color};font-weight:600;">{cr:+.2f}%</td>
                     <td style="text-align:right;padding:10px 8px;color:{pr_color};font-weight:700;">{pr:+.2f}%</td>
                     <td style="text-align:right;padding:10px 8px;color:{pnl_color};font-weight:700;">{pnl:+,.0f}원</td>
                     <td style="text-align:right;padding:10px 8px;color:#f8fafc;font-weight:600;">{h.get('eval_amount', 0):,.0f}원</td>
@@ -171,6 +175,7 @@ def render_overview_tab(api, screener, summary, holdings, proposals, holding_cod
                     <th style="text-align:right;">보유수량</th>
                     <th style="text-align:right;">매입평균가</th>
                     <th style="text-align:right;">현재가</th>
+                    <th style="text-align:right;">당일등락률</th>
                     <th style="text-align:right;">수익률(%)</th>
                     <th style="text-align:right;">평가손익(원)</th>
                     <th style="text-align:right;">평가금액(원)</th>
@@ -376,7 +381,7 @@ def render_risk_tab(api, screener, holdings, proposals, realtime_detection_fragm
                 "보유수량": h["quantity"],
                 "매입평균가": h["avg_buy_price"],
                 "현재가": h["current_price"],
-                "당일등락률": float(h.get("change_rate", 0)),
+                "당일등락률": float(h.get("change_rate") or h.get("fltt_rt") or h.get("prdy_ctrt") or 0.0),
                 "수익률(%)": float(h.get("profit_rate", 0)),
                 "평가손익(원)": h.get("profit_loss", 0),
                 "평가금액(원)": h.get("eval_amount", 0),

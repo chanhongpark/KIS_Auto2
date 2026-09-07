@@ -334,6 +334,32 @@ class KISApiClient:
             for item in output1:
                 qty = int(item.get("hldg_qty", 0))
                 if qty > 0:
+                    # 당일 주가 등락률 파싱 (fltt_rt, prdy_ctrt 또는 전일대비 직접 계산)
+                    change_rate = 0.0
+                    raw_fltt = str(item.get("fltt_rt", "")).strip()
+                    raw_prdy = str(item.get("prdy_ctrt", "")).strip()
+                    if raw_fltt and raw_fltt not in ("0", "0.0", "0.00", "0.00000000"):
+                        try:
+                            change_rate = float(raw_fltt)
+                        except (ValueError, TypeError):
+                            pass
+                    elif raw_prdy and raw_prdy not in ("0", "0.0", "0.00"):
+                        try:
+                            change_rate = float(raw_prdy)
+                        except (ValueError, TypeError):
+                            pass
+
+                    # fallback: 전일대비(bfdy_cprs_icdc / prdy_vrss)와 현재가로 직접 계산
+                    if change_rate == 0.0:
+                        try:
+                            diff_val = float(item.get("bfdy_cprs_icdc") or item.get("prdy_vrss") or 0.0)
+                            curr_val = float(item.get("prpr", 0.0))
+                            prev_close = curr_val - diff_val
+                            if prev_close > 0 and diff_val != 0:
+                                change_rate = (diff_val / prev_close) * 100.0
+                        except Exception:
+                            pass
+
                     holdings.append({
                         "code": item.get("pdno"),
                         "name": item.get("prdt_name"),
@@ -344,7 +370,7 @@ class KISApiClient:
                         "eval_amount": float(item.get("evlu_amt", 0)),
                         "profit_loss": float(item.get("evlu_pfls_amt", 0)),
                         "profit_rate": float(item.get("evlu_pfls_rt", 0)),
-                        "change_rate": float(item.get("fltt_rt") or item.get("prdy_ctrt") or 0.0),
+                        "change_rate": change_rate,
                     })
 
             summary = {}
