@@ -19,6 +19,7 @@ from core.position_tracker import PositionTracker, POSITIONS_STATE_FILE, COOLDOW
 from core.strategy import get_strategy, get_default_strategy_name, get_active_strategies
 
 PROPOSALS_FILE = os.path.join(os.path.dirname(__file__), "proposals.json")
+PROPOSALS_FALLBACK_FILE = os.path.join(os.path.dirname(__file__), "proposals_fallback.json")
 
 class StockScreener:
     def __init__(self, api_client: Optional[KISApiClient] = None, strategy_name: Optional[str] = None):
@@ -598,12 +599,16 @@ class StockScreener:
         # 현재 실시간 잔고 기준 매도 신호만 최신 반영 (조건 해제 종목 자동 제외 및 최신 현재가/평가손익 동기화)
         merged_sell_proposals = sell_proposals
 
+        screening_at = existing.get("generated_at", now_str())
+        screening_type = existing.get("screening_type", "CLOSING_BUY_1515")
         last_recommended = existing.get("last_recommended_proposals", [])
         last_rec_at = existing.get("last_recommended_at", "-")
         top_candidates = existing.get("top_candidates", [])
 
         proposals_data = {
-            "generated_at": now_str(),
+            "generated_at": screening_at,
+            "sell_checked_at": now_str(),
+            "screening_type": screening_type,
             "buy_proposals": buy_proposals,
             "last_recommended_proposals": last_recommended,
             "last_recommended_at": last_rec_at,
@@ -729,10 +734,17 @@ class StockScreener:
 
     def save_proposals(self, data: dict) -> bool:
         ok = atomic_save_json(PROPOSALS_FILE, data)
+        # fallback 백업 파일에도 저장
+        try:
+            atomic_save_json(PROPOSALS_FALLBACK_FILE, data)
+        except Exception:
+            pass
+
         try:
             from google_sheet_manager import get_sheet_manager
             sheet_mgr = get_sheet_manager()
             if sheet_mgr.is_connected:
+                sheet_mgr.sync_proposals_state_to_sheet(data)
                 sheet_mgr.sync_proposals_to_sheet(data)
         except Exception as e:
             self.logger.debug(f"Google Sheet Proposals 동기화 생략: {e}")
@@ -740,13 +752,40 @@ class StockScreener:
 
     @staticmethod
     def load_proposals() -> Dict[str, Any]:
-        return safe_load_json(PROPOSALS_FILE, default={
-            "generated_at": "-",
-            "buy_proposals": [],
-            "last_recommended_proposals": [],
-            "last_recommended_at": "-",
-            "top_candidates": [],
-            "sell_proposals": [],
-            "holdings_count": 0,
-            "status": "EMPTY"
-        })
+        data = safe_load_json(PROPOSALS_FILE, default={})
+        
+        # 1. 로컬 proposals.json 에 매수추천/최근추천/관망후보 데이터가 비어있는 경우 (Streamlit Cloud 재부팅 등)
+        has_content = bool(data.get("buy_proposals") or data.get("last_recommended_proposals") or data.get("top_candidates"))
+        if not has_content:
+            try:
+                from google_sheet_manager import get_sheet_manager
+                sheet_mgr = get_sheet_manager()
+                if sheet_mgr.is_connected:
+                    sheet_data = sheet_mgr.read_proposals_state_from_sheet()
+                    if sheet_data and (sheet_data.get("buy_proposals") or sheet_data.get("last_recommended_proposals") or sheet_data.get("top_candidates")):
+                        data.update(sheet_data)
+                        atomic_save_json(PROPOSALS_FILE, data)
+                        logging.getLogger("Screener").info("Google Sheet로부터 스크리닝 상태(ProposalsState) 복원 완료")
+            except Exception as e:
+                logging.getLogger("Screener").debug(f"Google Sheet ProposalsState 복원 생략: {e}")
+
+        # 2. 여전히 데이터가 비어있다면 git에 포함된 proposals_fallback.json에서 복원 시도
+        if not bool(data.get("buy_proposals") or data.get("last_recommended_proposals") or data.get("top_candidates")):
+            fallback = safe_load_json(PROPOSALS_FALLBACK_FILE, default={})
+            if fallback:
+                for k, v in fallback.items():
+                    if k not in data or not data[k]:
+                        data[k] = v
+                atomic_save_json(PROPOSALS_FILE, data)
+
+        # 기본 필드 구조 보장
+        data.setdefault("generated_at", "-")
+        data.setdefault("screening_type", "CLOSING_BUY_1515")
+        data.setdefault("buy_proposals", [])
+        data.setdefault("last_recommended_proposals", [])
+        data.setdefault("last_recommended_at", "-")
+        data.setdefault("top_candidates", [])
+        data.setdefault("sell_proposals", [])
+        data.setdefault("holdings_count", 0)
+        data.setdefault("status", "READY" if (data.get("buy_proposals") or data.get("last_recommended_proposals") or data.get("top_candidates")) else "EMPTY")
+        return data

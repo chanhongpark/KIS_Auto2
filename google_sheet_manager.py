@@ -50,6 +50,7 @@ class GoogleSheetManager:
         self.spreadsheet: Optional[Any] = None
         self.settings_worksheet: Optional[Any] = None
         self.proposals_worksheet: Optional[Any] = None
+        self.proposals_state_worksheet: Optional[Any] = None
         self.positions_worksheet: Optional[Any] = None
         self.cooldown_worksheet: Optional[Any] = None
         self.trade_history_worksheet: Optional[Any] = None
@@ -194,6 +195,13 @@ class GoogleSheetManager:
                 "TradeHistory",
                 headers=["체결일시", "구분", "종목코드", "종목명", "체결수량", "체결단가", "체결금액", "수익률(%)", "실현손익", "주문번호", "비고"],
                 rows="1000", cols="12"
+            )
+
+            # 6. 'ProposalsState' 워크시트 (마지막 스크리닝 결과 및 관망/추천 종목 상태 보존)
+            self.proposals_state_worksheet = self._get_or_create_worksheet(
+                "ProposalsState",
+                headers=["키", "값JSON", "갱신일시"],
+                rows="30", cols="5"
             )
 
             self.is_connected = True
@@ -352,6 +360,70 @@ class GoogleSheetManager:
         except Exception as e:
             logger.warning(f"Google Sheet Proposals 동기화 실패: {e}")
             return False
+
+    def sync_proposals_state_to_sheet(self, proposals_data: Dict[str, Any]) -> bool:
+        """마지막 스크리닝 결과(추천, 관망 후보 등)를 'ProposalsState' 워크시트에 최신화"""
+        if not self.is_connected or not self.proposals_state_worksheet:
+            return False
+
+        try:
+            now_s = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            meta = {
+                "generated_at": proposals_data.get("generated_at", now_s),
+                "screening_type": proposals_data.get("screening_type", "CLOSING_BUY_1515"),
+                "last_recommended_at": proposals_data.get("last_recommended_at", "-"),
+                "sell_checked_at": proposals_data.get("sell_checked_at", "-"),
+                "status": proposals_data.get("status", "READY"),
+                "holdings_count": proposals_data.get("holdings_count", 0)
+            }
+            rows = [
+                ["metadata", json.dumps(meta, ensure_ascii=False), now_s],
+                ["buy_proposals", json.dumps(proposals_data.get("buy_proposals", []), ensure_ascii=False), now_s],
+                ["last_recommended_proposals", json.dumps(proposals_data.get("last_recommended_proposals", []), ensure_ascii=False), now_s],
+                ["top_candidates", json.dumps(proposals_data.get("top_candidates", []), ensure_ascii=False), now_s],
+                ["sell_proposals", json.dumps(proposals_data.get("sell_proposals", []), ensure_ascii=False), now_s]
+            ]
+
+            # 기존 행 삭제 후 다시 기록
+            try:
+                all_records = self.proposals_state_worksheet.get_all_records()
+                if all_records:
+                    self.proposals_state_worksheet.delete_rows(2, len(all_records) + 1)
+            except Exception:
+                pass
+
+            self.proposals_state_worksheet.append_rows(rows)
+            logger.info("📊 Google Sheet 'ProposalsState'에 스크리닝 상태 최신화 완료")
+            return True
+        except Exception as e:
+            logger.warning(f"Google Sheet ProposalsState 동기화 실패: {e}")
+            return False
+
+    def read_proposals_state_from_sheet(self) -> Dict[str, Any]:
+        """Google Sheet 'ProposalsState'에서 마지막 스크리닝 상태 복원"""
+        if not self.is_connected or not self.proposals_state_worksheet:
+            return {}
+
+        try:
+            records = self.proposals_state_worksheet.get_all_records()
+            data: Dict[str, Any] = {}
+            for rec in records:
+                key = str(rec.get("키", "")).strip()
+                val_raw = rec.get("값JSON", "")
+                if not key or not val_raw:
+                    continue
+                try:
+                    val = json.loads(str(val_raw))
+                    if key == "metadata" and isinstance(val, dict):
+                        data.update(val)
+                    else:
+                        data[key] = val
+                except Exception as ex:
+                    logger.debug(f"ProposalsState 필드 '{key}' 파싱 실패: {ex}")
+            return data
+        except Exception as e:
+            logger.warning(f"Google Sheet ProposalsState 읽기 실패: {e}")
+            return {}
 
     # =========================================================================
     # 3. PositionsState (트레일링 스탑 포지션 추적) 동기화
