@@ -23,6 +23,8 @@ class TestTradingAlgorithm(unittest.TestCase):
                 pass
         self.mock_api = MagicMock()
         self.screener = StockScreener(self.mock_api)
+        self.screener._notify_screening_summary = MagicMock()
+        self.screener._notify_sell_recommendations = MagicMock()
 
     def generate_dummy_candles(self, n=65, base_price=10000, trend="up", vol=100000):
         candles = []
