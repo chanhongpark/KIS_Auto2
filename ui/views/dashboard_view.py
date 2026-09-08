@@ -244,14 +244,14 @@ def _get_sell_button_style(sell_type: str, is_urgent: bool) -> tuple:
     """매도 유형에 따른 버튼 key 접두사와 아이콘/텍스트 반환"""
     if is_urgent or "긴급" in sell_type or "손절" in sell_type:
         return "urgent", "🚨 긴급 매도"
-    if "익절" in sell_type or "트레일링" in sell_type:
-        return "profit", "🎯 익절 매도"
     if "타임컷" in sell_type:
         return "timecut", "⏳ 타임컷 매도"
-    if "데드크로스" in sell_type or "청산" in sell_type:
-        return "deadcross", "📉 청산 매도"
     if "RSI" in sell_type or "과열" in sell_type:
         return "rsi", "🔥 RSI 매도"
+    if "익절" in sell_type or "트레일링" in sell_type:
+        return "profit", "🎯 익절 매도"
+    if "데드크로스" in sell_type or "청산" in sell_type:
+        return "deadcross", "📉 청산 매도"
     return "default", "⚡ 매도"
 
 def render_risk_tab(api, screener, holdings, proposals, realtime_detection_fragment):
