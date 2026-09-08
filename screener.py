@@ -507,10 +507,23 @@ class StockScreener:
         # 현재 잔고 기준 실시간 재평가된 매도 신호만 최신 반영 (조건 해제 종목 자동 제외 및 실시간 가격/손익 동기화)
         merged_sell_proposals = sell_proposals
 
+        existing = self.load_proposals()
+        if top_buy_proposals:
+            last_recommended = top_buy_proposals
+            last_rec_at = now_str()
+        else:
+            last_recommended = existing.get("last_recommended_proposals", [])
+            last_rec_at = existing.get("last_recommended_at", "-")
+            if not last_recommended and existing.get("buy_proposals"):
+                last_recommended = existing.get("buy_proposals")
+                last_rec_at = existing.get("generated_at", "-")
+
         proposals_data = {
             "generated_at": now_str(),
             "screening_type": "CLOSING_BUY_1515",
             "buy_proposals": top_buy_proposals,
+            "last_recommended_proposals": last_recommended,
+            "last_recommended_at": last_rec_at,
             "top_candidates": top_candidates,
             "sell_proposals": merged_sell_proposals,
             "holdings_count": len(holdings),
@@ -585,9 +598,16 @@ class StockScreener:
         # 현재 실시간 잔고 기준 매도 신호만 최신 반영 (조건 해제 종목 자동 제외 및 최신 현재가/평가손익 동기화)
         merged_sell_proposals = sell_proposals
 
+        last_recommended = existing.get("last_recommended_proposals", [])
+        last_rec_at = existing.get("last_recommended_at", "-")
+        top_candidates = existing.get("top_candidates", [])
+
         proposals_data = {
             "generated_at": now_str(),
             "buy_proposals": buy_proposals,
+            "last_recommended_proposals": last_recommended,
+            "last_recommended_at": last_rec_at,
+            "top_candidates": top_candidates,
             "sell_proposals": merged_sell_proposals,
             "holdings_count": len(holdings),
             "status": "READY"
@@ -723,6 +743,8 @@ class StockScreener:
         return safe_load_json(PROPOSALS_FILE, default={
             "generated_at": "-",
             "buy_proposals": [],
+            "last_recommended_proposals": [],
+            "last_recommended_at": "-",
             "top_candidates": [],
             "sell_proposals": [],
             "holdings_count": 0,
