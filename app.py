@@ -121,11 +121,11 @@ holdings = balance_data.get("holdings", [])
 proposals = screener.load_proposals()
 
 # 매도 추천에서 이미 매도 완료된 종목 제외
-holding_codes = {h["code"] for h in holdings}
+holding_codes = {h.get("code") for h in holdings if isinstance(h, dict) and h.get("code")}
 if proposals.get("sell_proposals"):
     proposals["sell_proposals"] = [
         s for s in proposals["sell_proposals"]
-        if s.get("code") in holding_codes
+        if isinstance(s, dict) and s.get("code") in holding_codes
     ]
 
 # 통합 페이지 라우팅

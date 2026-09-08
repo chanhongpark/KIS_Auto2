@@ -157,31 +157,22 @@ def render_overview_tab(api, screener, summary, holdings, proposals, holding_cod
                 </tr>
             """)
         html_table = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-        <meta charset="utf-8">
+        <div class="holdings-container">
         <style>
-            body {{
-                margin: 0;
-                padding: 0;
-                background-color: transparent;
-                font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Segoe UI", Roboto, sans-serif;
-                color: #f8fafc;
-            }}
             .holdings-container {{
                 background: #0b0f19;
                 border: 1px solid #1e293b;
                 border-radius: 12px;
                 padding: 12px;
                 box-sizing: border-box;
+                overflow-x: auto;
             }}
-            table {{
+            .holdings-table {{
                 width: 100%;
                 border-collapse: collapse;
                 font-size: 0.88rem;
             }}
-            th {{
+            .holdings-table th {{
                 background: #1e293b;
                 color: #f1f5f9;
                 font-weight: 700;
@@ -189,14 +180,11 @@ def render_overview_tab(api, screener, summary, holdings, proposals, holding_cod
                 border-bottom: 2px solid #334155;
                 white-space: nowrap;
             }}
-            tr:hover {{
+            .holdings-table tr:hover {{
                 background-color: rgba(30, 41, 59, 0.4);
             }}
         </style>
-        </head>
-        <body>
-        <div class="holdings-container">
-        <table>
+        <table class="holdings-table">
             <thead>
                 <tr>
                     <th style="text-align:center;">수익</th>
@@ -217,10 +205,11 @@ def render_overview_tab(api, screener, summary, holdings, proposals, holding_cod
             </tbody>
         </table>
         </div>
-        </body>
-        </html>
         """
-        st.components.v1.html(html_table, height=85 + len(holdings) * 44, scrolling=True)
+        if hasattr(st, "html"):
+            st.html(html_table)
+        else:
+            components.html(html_table, height=85 + len(holdings) * 44, scrolling=True)
 
         holding_options = [f"{h['name']} ({h['code']}) | 평단가: {h['avg_buy_price']:,.0f}원 | 수익률: {h['profit_rate']:+.2f}%" for h in holdings]
         selected_idx = st.selectbox(

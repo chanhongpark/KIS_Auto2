@@ -51,8 +51,11 @@ def _get_env_or_secret(key: str, default: str = "") -> str:
         return val
     try:
         import streamlit as st
-        if hasattr(st, "secrets") and key in st.secrets:
-            return str(st.secrets[key])
+        try:
+            if hasattr(st, "secrets") and key in st.secrets:
+                return str(st.secrets.get(key, default) if hasattr(st.secrets, "get") else st.secrets[key])
+        except (KeyError, Exception):
+            pass
     except Exception:
         pass
     return default
@@ -396,7 +399,7 @@ def get_effective_settings_for_regime(detected_regime: str, base_settings: Optio
         for k, v in preset_values.items():
             if k not in ["name", "description"]:
                 resolved[k] = v
-        resolved["_active_regime_name"] = preset_values["name"]
+        resolved["_active_regime_name"] = preset_values.get("name", target_preset_key)
 
     resolved.update(user_settings)
     return resolved
