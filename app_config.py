@@ -8,14 +8,17 @@ import json
 import logging
 import threading
 from typing import Any, Dict, Optional, List
+import datetime
+from zoneinfo import ZoneInfo
 from core.storage import safe_load_json, atomic_save_json
+
+_KST = ZoneInfo("Asia/Seoul")
 
 # 로깅 기본 설정 (KST 기준)
 class KSTFormatter(logging.Formatter):
     """한국 표준시(KST) 기준으로 로그 타임스탬프를 출력하는 Formatter"""
     def formatTime(self, record, datefmt=None):
-        from time_utils import now
-        dt = now()
+        dt = datetime.datetime.fromtimestamp(record.created, tz=_KST)
         if datefmt:
             return dt.strftime(datefmt)
         return dt.strftime('%Y-%m-%d %H:%M:%S')
@@ -516,6 +519,3 @@ def sync_settings_from_google_sheet() -> bool:
     except Exception as e:
         logger.debug(f"구글 시트 설정 동기화 생략: {e}")
     return False
-
-# 모듈 로드 완료 후 구글 시트 우선 동기화 1회 실행
-sync_settings_from_google_sheet()

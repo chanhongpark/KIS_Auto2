@@ -34,9 +34,10 @@ apply_custom_styles()
 if "nav_page" not in st.session_state or st.session_state["nav_page"] not in ["dashboard", "screener", "backtest", "settings"]:
     st.session_state["nav_page"] = "dashboard"
 
-# 1회 스케줄러 초기화 (백그라운드 스레드 중복 실행 방지)
+# 1회 스케줄러 및 시스템 리소스 초기화 (백그라운드 스레드 중복 실행 방지)
 @st.cache_resource
 def get_system_scheduler():
+    config.sync_settings_from_google_sheet()
     return start_scheduler()
 
 scheduler = get_system_scheduler()

@@ -10,24 +10,44 @@ def __getattr__(name: str):
     ):
         from core import exceptions
         return getattr(exceptions, name)
+    if name == "exceptions":
+        from core import exceptions
+        return exceptions
     if name in ("safe_load_json", "atomic_save_json"):
         from core import storage
         return getattr(storage, name)
+    if name == "storage":
+        from core import storage
+        return storage
     if name == "calculate_technical_indicators":
         from core import indicators
         return getattr(indicators, name)
+    if name == "indicators":
+        from core import indicators
+        return indicators
     if name in ("PositionTracker", "POSITIONS_STATE_FILE", "COOLDOWN_FILE"):
         from core import position_tracker
         return getattr(position_tracker, name)
+    if name == "position_tracker":
+        from core import position_tracker
+        return position_tracker
     if name in (
         "get_market_regime", "calculate_position_size",
         "evaluate_buy_signals_from_df", "evaluate_sell_signals_from_df"
     ):
         from core import strategy
         return getattr(strategy, name)
+    if name == "strategy":
+        from core import strategy
+        return strategy
     raise AttributeError(f"module 'core' has no attribute '{name}'")
 
 __all__ = [
+    "exceptions",
+    "storage",
+    "indicators",
+    "position_tracker",
+    "strategy",
     "KISError",
     "KISApiError",
     "KISAuthError",
