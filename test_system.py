@@ -6,7 +6,7 @@ import sys
 
 def test_modules():
     print("1. Testing config.py...")
-    import config
+    import app_config as config
     settings = config.load_settings()
     print(f"   Settings loaded successfully: {len(settings.get('watchlist', []))} watchlist items.")
     print(f"   CANO: {config.CANO[:4]}****, Mock Trading: {config.CURRENT_SETTINGS.get('mock_trading')}")

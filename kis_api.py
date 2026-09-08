@@ -12,7 +12,7 @@ from typing import Dict, Any, List, Optional
 import requests
 from requests.adapters import HTTPAdapter
 
-import config
+import app_config as config
 from time_utils import now, today
 from core.storage import safe_load_json, atomic_save_json
 from core.exceptions import KISApiError, KISAuthError, KISRateLimitError, KISOrderError

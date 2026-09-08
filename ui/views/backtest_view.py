@@ -12,7 +12,7 @@ from plotly.subplots import make_subplots
 from time_utils import today
 from backtester import Backtester
 from core.strategy import list_strategies
-import config
+import app_config as config
 
 def render_backtest():
     """4. 백테스팅 페이지 (FinanceDataReader)"""

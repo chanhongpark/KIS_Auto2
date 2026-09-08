@@ -19,7 +19,7 @@ def test_google_sheet_connection():
         print("   워크시트 목록:", [ws.title for ws in mgr.spreadsheet.worksheets()])
         
         # Settings 동기화 테스트
-        import config
+        import app_config as config
         test_settings = config.load_settings()
         sync_ok = mgr.sync_settings_to_sheet(test_settings)
         print(f"5. Settings 동기화 결과: {sync_ok}")

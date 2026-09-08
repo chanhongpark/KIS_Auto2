@@ -9,7 +9,7 @@ import requests
 from html import escape as html_escape
 from typing import Optional, Dict, Any, List
 
-import config
+import app_config as config
 from core.storage import safe_load_json, atomic_save_json
 from time_utils import today
 

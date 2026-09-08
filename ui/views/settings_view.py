@@ -7,7 +7,7 @@ KIS Auto Trading - Settings View
 import time
 from typing import Dict, Any, List
 import streamlit as st
-import config
+import app_config as config
 from core.strategy import list_strategies, get_strategy_settings_schema, get_strategy_specific_settings_keys
 
 

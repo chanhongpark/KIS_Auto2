@@ -11,7 +11,7 @@ import pandas as pd
 import numpy as np
 import FinanceDataReader as fdr
 
-import config
+import app_config as config
 from screener import StockScreener
 from core.indicators import calculate_technical_indicators
 from core.strategy import get_strategy, get_default_strategy_name

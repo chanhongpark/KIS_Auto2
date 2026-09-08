@@ -9,7 +9,7 @@ import datetime
 from typing import Dict, Any, List, Optional, Set
 import pandas as pd
 
-import config
+import app_config as config
 from kis_api import KISApiClient
 from telegram_notifier import notifier
 from time_utils import today, now_str

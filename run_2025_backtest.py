@@ -15,7 +15,7 @@ if sys.stdout.encoding != 'utf-8':
         pass
 
 from backtester import Backtester
-import config
+import app_config as config
 
 def run_analysis():
     print("=== [2025 Backtest Analysis] Starting Simulation ===")

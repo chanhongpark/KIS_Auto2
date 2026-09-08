@@ -8,7 +8,7 @@ import logging
 import datetime
 from typing import Dict, Any, List, Optional
 
-import config
+import app_config as config
 
 logger = logging.getLogger("GoogleSheetManager")
 

@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 
 import os
 from screener import StockScreener, POSITIONS_STATE_FILE
-import config
+import app_config as config
 
 class TestTradingAlgorithm(unittest.TestCase):
     def setUp(self):

@@ -14,7 +14,7 @@ import logging
 import datetime
 import threading
 
-import config
+import app_config as config
 from screener import StockScreener
 from time_utils import now
 

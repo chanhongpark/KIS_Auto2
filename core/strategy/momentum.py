@@ -8,7 +8,7 @@ import logging
 from typing import Dict, Any, Optional, Set
 import pandas as pd
 
-import config
+import app_config as config
 from core.strategy.base import BaseStrategy
 from core.strategy import register_strategy
 

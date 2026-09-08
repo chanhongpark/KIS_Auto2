@@ -82,7 +82,7 @@ def get_strategy_specific_settings_keys(name: str) -> Set[str]:
 
 def get_active_strategies(names: Optional[List[str]] = None) -> List[BaseStrategy]:
     """활성화된 전략 인스턴스 목록 반환 (다중 전략 지원)"""
-    import config
+    import app_config as config
     if names is None:
         names = config.CURRENT_SETTINGS.get("active_strategies")
         if not names:

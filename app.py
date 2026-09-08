@@ -6,7 +6,7 @@ KIS Auto Trader - Streamlit Control Center
 import time
 import streamlit as st
 
-import config
+import app_config as config
 from kis_api import KISApiClient
 from screener import StockScreener
 from scheduler import start_scheduler
