@@ -72,9 +72,12 @@ def render_overview_tab(api, screener, summary, holdings, proposals, holding_cod
             top_cands = proposals.get("top_candidates", [])
             if top_cands:
                 st.markdown("**👀 [관망 후보 Top 3 (매수 추천 아님)]**")
-                for idx, c in enumerate(top_cands[:3], 1):
-                    disq = c.get('disqualify_reason', '기준 미달')
-                    st.caption(f"**{idx}위. {c['name']} ({c['code']})** 현재가: `{c['current_price']:,.0f}원` | **{c['score']}점** (사유: {disq})")
+                cand_tabs = st.tabs([f"{idx}위. {c['name']} ({c['score']}점)" for idx, c in enumerate(top_cands[:3], 1)])
+                for idx, (tab, c) in enumerate(zip(cand_tabs, top_cands[:3]), 1):
+                    with tab:
+                        disq = c.get('disqualify_reason', '기준 미달')
+                        st.caption(f"**{c['name']} ({c['code']})** | 현재가: `{c['current_price']:,.0f}원` | **{c['score']}점** (사유: {disq})")
+                        render_interactive_stock_chart(api, screener, c['code'], c['name'])
         else:
             for b in buy_list[:3]:
                 buy_tag = "🔄 추가매수" if b.get("code") in holding_codes else "🆕 신규매수"

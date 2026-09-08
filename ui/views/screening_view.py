@@ -191,12 +191,14 @@ def render_screener(api, screener, proposals, holding_codes):
     if top_candidates:
         st.markdown("---")
         st.subheader("👀 [관망 후보 Top 3] 상대 점수 상위 종목 (※ 매수 추천 아님)")
-        st.caption("매수 조건(수급 게이트 또는 체결강도/윗꼬리 등)을 완전히 충족하지는 못했으나, 분석 대상 종목 중 기술적/수급 점수가 가장 높았던 상위 3개 항목입니다. 주문 발주 대상이 아니며 단순 관망 및 시장 흐름 파악용입니다.")
-        for idx, item in enumerate(top_candidates, 1):
-            with st.container():
+        st.caption("매수 조건(수급 게이트 또는 체결강도/윗꼬리 등)을 완전히 충족하지는 못했으나, 분석 대상 종목 중 기술적/수급 점수가 가장 높았던 상위 항목입니다. 아래 탭을 클릭하여 각 종목별 점수 및 실시간 주가 차트를 바로 확인하세요.")
+        
+        cand_tabs = st.tabs([f"📊 {idx}위. {item['name']} ({item['score']}점)" for idx, item in enumerate(top_candidates, 1)])
+        for idx, (tab, item) in enumerate(zip(cand_tabs, top_candidates), 1):
+            with tab:
                 col_info, col_score = st.columns([3.5, 1.0])
                 with col_info:
-                    st.markdown(f"#### {idx}위. {item['name']} <small style='color:#64748b'>({item['code']})</small>", unsafe_allow_html=True)
+                    st.markdown(f"### {idx}위. {item['name']} <small style='color:#64748b'>({item['code']})</small>", unsafe_allow_html=True)
                     st.write(f"**현재가:** `{item['current_price']:,.0f}원` ({item.get('change_rate', 0.0):+.2f}%)")
                     
                     badges = [f"<span class='score-badge' style='background:#334155; color:#f1f5f9; font-weight:bold;'>종합 {item['score']}점</span>"]
@@ -220,11 +222,10 @@ def render_screener(api, screener, proposals, holding_codes):
                 with col_score:
                     st.metric("종합 점수", f"{item['score']}점")
 
-                with st.expander(f"📈 {idx}위. {item['name']} ({item['code']}) 주가 차트 및 보조지표 분석", expanded=True):
-                    render_interactive_stock_chart(
-                        api_client=api,
-                        screener_engine=screener,
-                        code=item["code"],
-                        name=item["name"]
-                    )
-            st.divider()
+                # 주가 차트 바로 노출
+                render_interactive_stock_chart(
+                    api_client=api,
+                    screener_engine=screener,
+                    code=item["code"],
+                    name=item["name"]
+                )
