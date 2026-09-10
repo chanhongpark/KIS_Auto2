@@ -395,6 +395,11 @@
     },
     {
       "code": "241560",
+      "name": "두산밥캣",
+      "market": "KOSPI"
+    },
+    {
+      "code": "131970",
       "name": "두산테스나",
       "market": "KOSDAQ"
     },
@@ -545,12 +550,12 @@
     },
     {
       "code": "450080",
-      "name": "두산로보틱스",
+      "name": "에코프로머티",
       "market": "KOSPI"
     },
     {
       "code": "454910",
-      "name": "두산밥캣",
+      "name": "두산로보틱스",
       "market": "KOSPI"
     },
     {
