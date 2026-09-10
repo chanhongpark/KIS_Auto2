@@ -137,7 +137,9 @@ def render_overview_tab(api, screener, summary, holdings, proposals, holding_cod
 
             pos_info = positions_state.get(h["code"], {})
             strat = pos_info.get("strategy", "momentum")
-            if "rebound" in strat:
+            if "monthly" in strat:
+                strat_badge = '<span style="background:#7c2d12;color:#fdba74;padding:2px 6px;border-radius:4px;font-size:0.75rem;font-weight:600;">📅 월봉 10이평</span>'
+            elif "rebound" in strat:
                 strat_badge = '<span style="background:#1e3a8a;color:#93c5fd;padding:2px 6px;border-radius:4px;font-size:0.75rem;font-weight:600;">📉 52주 반등</span>'
             elif "multi" in strat or "&" in strat:
                 strat_badge = '<span style="background:#581c87;color:#d8b4fe;padding:2px 6px;border-radius:4px;font-size:0.75rem;font-weight:600;">🌟 슈퍼시그널</span>'
