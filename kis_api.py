@@ -522,6 +522,46 @@ class KISApiClient:
             self.logger.error(f"[{stock_code}] 차트 조회 에러: {e}")
             return []
 
+    def get_monthly_chart(self, stock_code: str, count: int = 20) -> List[Dict[str, Any]]:
+        """월별 차트/시세 데이터 조회 (OHLCV, FID_PERIOD_DIV_CODE='M')"""
+        end_date = today().strftime("%Y%m%d")
+        # count 개월 이상의 충분한 기간 확보 (1개월당 약 35일 여유)
+        start_date = (today() - datetime.timedelta(days=count * 35)).strftime("%Y%m%d")
+
+        url = f"{self.url_base}/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
+        headers = self._get_headers("FHKST03010100")
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_INPUT_ISCD": stock_code,
+            "FID_INPUT_DATE_1": start_date,
+            "FID_INPUT_DATE_2": end_date,
+            "FID_PERIOD_DIV_CODE": "M",
+            "FID_ORG_ADJ_PRC": "0"
+        }
+        try:
+            res = self._request_with_retry("GET", url, headers=headers, params=params, timeout=7)
+            data = res.json()
+            output2 = data.get("output2", [])
+            results = []
+            for item in output2[:count]:
+                try:
+                    results.append({
+                        "date": item.get("stck_bsop_date"),
+                        "close": float(item.get("stck_clpr", 0)),
+                        "open": float(item.get("stck_oprc", 0)),
+                        "high": float(item.get("stck_hgpr", 0)),
+                        "low": float(item.get("stck_lwpr", 0)),
+                        "volume": int(item.get("acml_vol", 0)),
+                        "change_rate": float(item.get("prdy_ctrt", 0)) if "prdy_ctrt" in item else 0.0
+                    })
+                except (ValueError, TypeError):
+                    continue
+            results.reverse()
+            return results
+        except Exception as e:
+            self.logger.error(f"[{stock_code}] 월봉 차트 조회 에러: {e}")
+            return []
+
     def get_account_balance(self) -> Dict[str, Any]:
         """계좌 잔고 및 보유 종목 조회 (TTTC8434R / VTTC8434R)"""
         url = f"{self.url_base}/uapi/domestic-stock/v1/trading/inquire-balance"

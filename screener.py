@@ -279,6 +279,32 @@ class StockScreener:
             except Exception as e:
                 self.logger.warning(f"[{name}({code})] 당일 체결강도 조회 예외: {e}")
 
+        # Step 4: 월봉 전략(monthly_trend) 활성화 시 월봉 데이터 수집
+        extra_data = {}
+        active_strats = getattr(self, "strategies", None) or get_active_strategies()
+        if any(s.name == "monthly_trend" for s in active_strats):
+            try:
+                m_candles = self.api.get_monthly_chart(code, count=15)
+                if m_candles:
+                    if realtime.get("rt_cd") == "0" and realtime.get("price", 0) > 0:
+                        curr_m_str = today().strftime("%Y%m")
+                        if m_candles[-1].get("date", "")[:6] == curr_m_str:
+                            m_candles[-1]["close"] = realtime["price"]
+                            m_candles[-1]["high"] = max(m_candles[-1].get("high", realtime["price"]), realtime["price"])
+                            m_candles[-1]["low"] = min(m_candles[-1].get("low", realtime["price"]), realtime["price"])
+                        else:
+                            m_candles.append({
+                                "date": today().strftime("%Y%m%d"),
+                                "open": realtime.get("stck_oprc", realtime["price"]),
+                                "close": realtime["price"],
+                                "high": realtime.get("stck_hgpr", realtime["price"]),
+                                "low": realtime.get("stck_lwpr", realtime["price"]),
+                                "volume": realtime.get("acml_vol", 0)
+                            })
+                    extra_data["monthly_df"] = pd.DataFrame(m_candles)
+            except Exception as e:
+                self.logger.warning(f"[{name}({code})] 월봉 데이터 조회 예외: {e}")
+
         return self.evaluate_buy_signals_from_df(
             df, code, name,
             held_codes=held_codes,
@@ -287,7 +313,8 @@ class StockScreener:
             futures_data=futures_data,
             return_raw_eval=return_raw_eval,
             investor_data=investor_data,
-            volume_power=volume_power
+            volume_power=volume_power,
+            extra_data=extra_data
         )
 
     # =========================================================================
@@ -415,7 +442,22 @@ class StockScreener:
                     "change_rate": realtime.get("prdy_ctrt", candles[-1].get("change_rate", 0.0))
                 })
 
-        df = self.calculate_technical_indicators(candles, is_intraday=True)
+        holding_strat = self._get_holding_strategy(code)
+        if holding_strat and holding_strat.name == "monthly_trend":
+            try:
+                m_candles = self.api.get_monthly_chart(code, count=15)
+                if m_candles and realtime.get("rt_cd") == "0" and realtime.get("price", 0) > 0:
+                    curr_m_str = today().strftime("%Y%m")
+                    if m_candles[-1].get("date", "")[:6] == curr_m_str:
+                        m_candles[-1]["close"] = realtime["price"]
+                    else:
+                        m_candles.append({"date": today().strftime("%Y%m%d"), "close": realtime["price"]})
+                df = pd.DataFrame(m_candles)
+            except Exception as e:
+                self.logger.warning(f"[{holding.get('name')}({code})] 매도 분석용 월봉 조회 예외: {e}")
+                df = self.calculate_technical_indicators(candles, is_intraday=True)
+        else:
+            df = self.calculate_technical_indicators(candles, is_intraday=True)
         sell_res = self.evaluate_sell_signals_from_df(
             holding=holding,
             df=df,
@@ -465,6 +507,28 @@ class StockScreener:
                     self.logger.info(f"⚡ 당일 거래대금 상위 주도주 {added_count}개 종목 스크리닝 유니버스 동적 편입 (총 {len(watchlist)}종목)")
             except Exception as e:
                 self.logger.warning(f"동적 유니버스 확장 중 예외: {e}")
+
+        # Step 3: 월봉 10이평 전략(monthly_trend) 활성화 시 KOSPI 100 유니버스 통합
+        active_strats = getattr(self, "strategies", None) or get_active_strategies()
+        if any(s.name == "monthly_trend" for s in active_strats):
+            try:
+                from core.universe import get_kospi100_universe
+                kospi100 = get_kospi100_universe()
+                existing_codes = {s.get("code") for s in watchlist if s.get("code")}
+                added_k100 = 0
+                for item in kospi100:
+                    code = item.get("code")
+                    name = item.get("name")
+                    if code and code not in existing_codes:
+                        watchlist.append(item)
+                        existing_codes.add(code)
+                        if hasattr(config, "STOCK_NAMES"):
+                            config.STOCK_NAMES[code] = name
+                        added_k100 += 1
+                if added_k100 > 0:
+                    self.logger.info(f"🏛️ KOSPI 100 유니버스 {added_k100}개 종목 스크리닝 유니버스 통합 (총 {len(watchlist)}종목)")
+            except Exception as e:
+                self.logger.warning(f"KOSPI 100 유니버스 로드 예외: {e}")
 
         buy_proposals = []
         unqualified_candidates = []

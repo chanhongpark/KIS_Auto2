@@ -27,3 +27,7 @@ cache/
 .idea/
 .DS_Store
 Thumbs.db
+
+# User Guide (Local only)
+user_guide.md
+user_guide.html
