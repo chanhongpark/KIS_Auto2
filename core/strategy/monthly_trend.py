@@ -59,7 +59,7 @@ class MonthlyTrendStrategy(BaseStrategy):
          "default": 10, "min": 3, "max": 24, "step": 1,
          "description": "추세 판별 월봉 단순이동평균 기간 (기본: 10개월)", "category": "strategy"},
         {"key": "monthly_allow_trend_continuation", "label": "10이평 상회 지속 종목 진입 허용", "type": "toggle",
-         "default": True, "description": "골든크로스 첫 달뿐만 아니라 10이평 위에서 우상향 지속 중인 우량주도 진입 허용", "category": "strategy"},
+         "default": False, "description": "골든크로스 첫 달뿐만 아니라 10이평 위에서 우상향 지속 중인 우량주도 진입 허용 (False: 신규 골든크로스 종목만 진입)", "category": "strategy"},
         {"key": "monthly_high_price_limit_enabled", "label": "100만 원 초과 고가주 1주 제한", "type": "toggle",
          "default": True, "description": "주가가 100만 원을 초과하는 황제주(고려아연 등)는 최대 1주만 매수하도록 제한", "category": "strategy"},
         {"key": "monthly_max_high_chase_pct", "label": "10이평 이격도 과열 차단 기준", "type": "number",
@@ -156,14 +156,14 @@ class MonthlyTrendStrategy(BaseStrategy):
         # 2. [핵심 매수 시그널] 월봉 10이평 골든크로스 vs 지속 상승 추세
         is_golden_cross = (prev_close <= prev_sma) and (curr_close > curr_sma)
         is_continuation = (prev_close > prev_sma) and (curr_close > curr_sma)
-        allow_continuation = sett.get("monthly_allow_trend_continuation", True)
+        allow_continuation = sett.get("monthly_allow_trend_continuation", False)
 
         if not is_golden_cross and not is_continuation:
             disqualify_reason = f"월봉 종가가 {sma_period}개월 이평선 하회 (역배열/하락추세)"
             if not return_raw_eval:
                 return None
         elif not is_golden_cross and not allow_continuation:
-            disqualify_reason = f"{sma_period}개월 이평선 상향 돌파(신규 골든크로스) 시점 아님"
+            disqualify_reason = f"{sma_period}개월 이평선 상향 돌파(신규 골든크로스) 첫 달 아님 (추세 지속 종목 배제)"
             if not return_raw_eval:
                 return None
 

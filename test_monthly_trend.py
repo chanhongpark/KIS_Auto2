@@ -104,6 +104,25 @@ class TestMonthlyTrendStrategy(unittest.TestCase):
         self.assertFalse(res["is_recommended"])
         self.assertIn("이격 과열", res["disqualify_reason"])
 
+    def test_evaluate_buy_continuation_rejected(self):
+        """10이평 상회 지속 종목(골든크로스 첫 달이 아님) 배제 검증"""
+        dates = pd.date_range(start="2024-01-01", periods=12, freq="MS").strftime("%Y%m%d").tolist()
+        # 1~10월 100원, 11월 102원 (이미 10이평 위), 12월 105원 (지속 상승)
+        prices = [100.0] * 10 + [102.0, 105.0]
+        df = pd.DataFrame({"date": dates, "close": prices})
+
+        # 기본 설정(monthly_allow_trend_continuation=False) 시 신규 골든크로스가 아니므로 탈락
+        res = self.strat.evaluate_buy(
+            df=df,
+            code="005930",
+            name="삼성전자",
+            return_raw_eval=True
+        )
+
+        self.assertIsNotNone(res)
+        self.assertFalse(res["is_recommended"])
+        self.assertIn("신규 골든크로스", res["disqualify_reason"])
+
     def test_evaluate_sell_dead_cross(self):
         """10개월 이평선 하향 이탈 시 전량 매도 신호 검증"""
         dates = pd.date_range(start="2024-01-01", periods=12, freq="MS").strftime("%Y%m%d").tolist()

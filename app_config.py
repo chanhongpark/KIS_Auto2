@@ -148,6 +148,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "active_strategies": ["momentum"],       # 활성화된 전략 목록 (다중 선택 지원)
     "strategy_name": "momentum",             # 단일 전략 이름 (하위 호환 유지)
     "strategy_settings": {},                 # 전략별 고유 설정 (예: {"momentum": {...}, "rebound": {...}})
+    "monthly_allow_trend_continuation": False, # 월봉 10이평 상회 지속 종목 진입 허용 (False: 신규 골든크로스 종목만 진입)
     "target_profit_rate": 0.08,             # 목표 익절 수익률 (+8.0%)
     "stop_loss_rate": -0.05,                # 손절 수익률 (-5.0%)
     "max_buy_budget_per_stock": 500000,     # 1종목당 최대 매수 한도 (원)

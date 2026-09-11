@@ -31,6 +31,12 @@
     },
     "rebound": {
       "rebound_w52_drop_threshold": -0.35
+    },
+    "monthly_trend": {
+      "monthly_sma_period": 10,
+      "monthly_allow_trend_continuation": false,
+      "monthly_high_price_limit_enabled": true,
+      "monthly_max_high_chase_pct": 0.2
     }
   },
   "target_profit_rate": 0.05,
