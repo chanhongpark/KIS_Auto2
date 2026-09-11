@@ -1,7 +1,7 @@
 """
 KIS Auto Trader - Streamlit Control Center
 한국투자증권 API 기반 주식 자동매매 & 제어 대시보드
-15:15 종가 매수 및 실시간 리스크 관리(손절 최우선 / 분할 익절) & FDR 백테스팅
+15:10 종가 매수 및 실시간 리스크 관리(손절 최우선 / 분할 익절) & FDR 백테스팅
 """
 import time
 import streamlit as st
@@ -89,7 +89,7 @@ with st.sidebar:
         <div class="sidebar-account-box">
             <div style="font-size: 0.72rem; color: #64748b; font-weight: 600;">ACTIVE ACCOUNT</div>
             <div style="font-size: 0.88rem; font-weight: 700; color: #e2e8f0; font-family: monospace;">{config.CANO}-{config.ACNT_PRDT_CD}</div>
-            <div style="font-size: 0.72rem; color: #94a3b8; margin-top: 4px;">⏰ 종가 매수: 매일 15:15 KST</div>
+            <div style="font-size: 0.72rem; color: #94a3b8; margin-top: 4px;">⏰ 종가 매수: 매일 15:10 KST</div>
         </div>
     """, unsafe_allow_html=True)
 
@@ -97,7 +97,7 @@ with st.sidebar:
     st.markdown("<div class='nav-header'>🧭 NAVIGATION • 메인 메뉴</div>", unsafe_allow_html=True)
     main_menu = [
         ("dashboard", "📊 자산 & 포트폴리오 (Dashboard)"),
-        ("screener", "🎯 15:15 종가 스크리닝 (Screener)"),
+        ("screener", "🎯 15:10 종가 스크리닝 (Screener)"),
         ("backtest", "🧪 퀀트 백테스터 (Backtester)"),
         ("settings", "⚙️ 시스템 환경설정 (Settings)")
     ]

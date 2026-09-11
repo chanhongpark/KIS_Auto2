@@ -1,6 +1,6 @@
 """
 KIS Auto Trading - Technical Indicators Module
-주가 데이터프레임 기반 이동평균, 볼린저 밴드, RSI, ATR 및 15:15 거래량 보정치 계산
+주가 데이터프레임 기반 이동평균, 볼린저 밴드, RSI, ATR 및 15:10 거래량 보정치 계산
 """
 from typing import List, Dict, Any, Optional, Union
 import pandas as pd
@@ -16,14 +16,14 @@ def calculate_technical_indicators(
     - 20영업일 이상 일봉 데이터 기준
     - 이동평균선: MA5, MA20, MA60
     - 거래량 이동평균: 전일까지 20일 거래량 단순 이동평균 (vol_ma20)
-    - 장중 거래량 보정치: 15:15 누적 거래량 * (390분 / 375분) ≈ 누적 거래량 * 1.04
+    - 장중 거래량 보정치: 15:10 누적 거래량 * (390분 / 370분) ≈ 누적 거래량 * 1.054
     - RSI(14)
     - 볼린저 밴드(20, 2): 20일 이평선 기준 ±2σ
     - ATR(14): 변동성 기반 손절 및 포지션 사이징용
 
     Args:
         candles_or_df: 캔들 리스트 또는 DataFrame
-        is_intraday: 장중 평가 여부 (True 시 15:15 거래량 1.04배 보정 적용)
+        is_intraday: 장중 평가 여부 (True 시 15:10 거래량 1.054배 보정 적용)
         atr_period: ATR 계산 기간 (기본: 14)
 
     Returns:
@@ -70,11 +70,11 @@ def calculate_technical_indicators(
     # 첫 행 등에 NaN이 남아있을 경우 현재 거래량으로 채움
     df["vol_ma20"] = df["vol_ma20"].fillna(df["volume"])
 
-    # 3. 당일 거래량 보정치 계산 (15:15 장마감 직전 평가 시 1.04배 보정)
+    # 3. 당일 거래량 보정치 계산 (15:10 장마감 직전 평가 시 1.054배 보정)
     df["adjusted_volume"] = df["volume"].astype(float).copy()
     if is_intraday and len(df) > 0:
         last_idx = df.index[-1]
-        df.loc[last_idx, "adjusted_volume"] = float(df.loc[last_idx, "volume"]) * (390.0 / 375.0)
+        df.loc[last_idx, "adjusted_volume"] = float(df.loc[last_idx, "volume"]) * (390.0 / 370.0)
 
     # 4. RSI (14)
     delta = df["close"].diff()

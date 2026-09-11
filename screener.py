@@ -1,6 +1,6 @@
 """
 Stock Screener & Signal Engine
-종가(15:15) 매수 후보 종목 발굴 및 실시간 리스크 관리(손절 최우선 / 분할 익절) 분석 엔진
+종가(15:10) 매수 후보 종목 발굴 및 실시간 리스크 관리(손절 최우선 / 분할 익절) 분석 엔진
 core.indicators, core.strategy, core.position_tracker 모듈을 기반으로 동작합니다.
 """
 import os
@@ -476,8 +476,8 @@ class StockScreener:
     # 스크리닝 및 주문 집행
     # =========================================================================
     def run_closing_price_screening(self) -> Dict[str, Any]:
-        """15:15 종가 매수 스크리닝 및 제안서 갱신"""
-        self.logger.info("=== [15:15] 종가 매수 후보 발굴 및 스크리닝 시작 ===")
+        """15:10 종가 매수 스크리닝 및 제안서 갱신"""
+        self.logger.info("=== [15:10] 종가 매수 후보 발굴 및 스크리닝 시작 ===")
         balance = self.api.get_account_balance()
         holdings = balance.get("holdings", [])
         held_codes = {h.get("code") for h in holdings if h.get("code")}
@@ -563,7 +563,7 @@ class StockScreener:
 
         proposals_data = {
             "generated_at": now_str(),
-            "screening_type": "CLOSING_BUY_1515",
+            "screening_type": "CLOSING_BUY_1510",
             "buy_proposals": top_buy_proposals,
             "last_recommended_proposals": last_recommended,
             "last_recommended_at": last_rec_at,
@@ -574,7 +574,7 @@ class StockScreener:
         }
 
         self.save_proposals(proposals_data)
-        self.logger.info(f"15:15 종가 스크리닝 완료: 매수 추천 {len(top_buy_proposals)}건 (상위 관망 후보 {len(top_candidates)}건), 매도 추천 {len(sell_proposals)}건")
+        self.logger.info(f"15:10 종가 스크리닝 완료: 매수 추천 {len(top_buy_proposals)}건 (상위 관망 후보 {len(top_candidates)}건), 매도 추천 {len(sell_proposals)}건")
         self._notify_screening_summary(top_buy_proposals, sell_proposals, len(holdings), top_candidates=top_candidates)
 
         return proposals_data

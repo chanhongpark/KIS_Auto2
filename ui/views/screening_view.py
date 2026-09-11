@@ -1,6 +1,6 @@
 """
 KIS Auto Trading - Screening & Order View
-15:15 종가 매수 스크리닝 및 원클릭/LOC 주문 발주 뷰
+15:10 종가 매수 스크리닝 및 원클릭/LOC 주문 발주 뷰
 """
 import time
 import streamlit as st
@@ -155,10 +155,10 @@ def _render_buy_card(api, screener, item, idx, holding_codes, key_prefix="buy", 
 
 
 def render_screener(api, screener, proposals, holding_codes):
-    """2. 15:15 종가 매수 스크리닝 & 발주 페이지"""
+    """2. 15:10 종가 매수 스크리닝 & 발주 페이지"""
     col_t1, col_t2 = st.columns([3.2, 1.3])
     with col_t1:
-        st.title("🎯 15:15 종가 매수 • 스크리닝 & 발주")
+        st.title("🎯 15:10 종가 매수 • 스크리닝 & 발주")
         st.caption(f"스크리닝 기준 시각: **{proposals.get('generated_at', '-')}** | 개별주식선물 파생수급 & 100점 만점 척도 적용 (60점 이상)")
     with col_t2:
         st.write("")
@@ -174,14 +174,14 @@ def render_screener(api, screener, proposals, holding_codes):
     last_rec_at = proposals.get("last_recommended_at", "-")
 
     if buy_list:
-        st.subheader(f"🚀 당일 15:15 종가 매수 추천 종목 ({len(buy_list)}건)")
+        st.subheader(f"🚀 당일 15:10 종가 매수 추천 종목 ({len(buy_list)}건)")
         for idx, item in enumerate(buy_list):
             _render_buy_card(api, screener, item, idx, holding_codes, key_prefix="today_buy", is_last_recommended=False)
     else:
-        st.info("💡 오늘(15:15) 신규 매수 추천 기준(총점 60점 이상 & 수급 필수 게이트 충족)에 도달한 종목은 없습니다.")
+        st.info("💡 오늘(15:10) 신규 매수 추천 기준(총점 60점 이상 & 수급 필수 게이트 충족)에 도달한 종목은 없습니다.")
         if last_recommended:
             st.markdown("---")
-            st.subheader("📌 마지막(최근) 15:15 종가 매수 추천 종목")
+            st.subheader("📌 마지막(최근) 15:10 종가 매수 추천 종목")
             st.caption(f"가장 최근 스크리닝(**{last_rec_at}**)에서 매수 추천되었던 종목입니다. 현재가 및 기술적 지표 흐름을 참고하여 원클릭으로 주문할 수 있습니다.")
             for idx, item in enumerate(last_recommended):
                 _render_buy_card(api, screener, item, idx, holding_codes, key_prefix="last_rec", is_last_recommended=True)

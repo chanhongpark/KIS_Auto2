@@ -230,9 +230,9 @@ class TelegramNotifier:
         sell_list: Optional[List[Dict[str, Any]]] = None,
         top_candidates: Optional[List[Dict[str, Any]]] = None
     ) -> bool:
-        """일일 스크리닝 요약 알림 전송 (15:15 종가 매수 및 매도 현황)"""
+        """일일 스크리닝 요약 알림 전송 (15:10 종가 매수 및 매도 현황)"""
         text = (
-            "📊 <b>15:15 종가 스크리닝 요약</b>\n"
+            "📊 <b>15:10 종가 스크리닝 요약</b>\n"
             "━━━━━━━━━━━━━━━━━━\n"
             f"🟢 <b>종가 매수 추천:</b> {buy_count}건\n"
             f"🔴 <b>매도 신호 감지:</b> {sell_count}건\n"

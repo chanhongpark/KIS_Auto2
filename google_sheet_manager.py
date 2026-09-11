@@ -169,7 +169,7 @@ class GoogleSheetManager:
                 rows="100", cols="6"
             )
 
-            # 2. 'Proposals' 워크시트 (15:15 스크리닝 매수/매도 제안)
+            # 2. 'Proposals' 워크시트 (15:10 스크리닝 매수/매도 제안)
             self.proposals_worksheet = self._get_or_create_worksheet(
                 "Proposals",
                 headers=["일시", "구분", "종목코드", "종목명", "현재가/추천가", "추천수량", "예상금액", "종합점수", "추세", "수급", "모멘텀", "거래량배수", "매매사유"],
@@ -311,7 +311,7 @@ class GoogleSheetManager:
     # 2. Proposals (스크리닝 매수/매도 제안) 동기화
     # =========================================================================
     def sync_proposals_to_sheet(self, proposals_data: Dict[str, Any]) -> bool:
-        """15:15 스크리닝 매수/매도 제안을 'Proposals' 워크시트에 누적 기록"""
+        """15:10 스크리닝 매수/매도 제안을 'Proposals' 워크시트에 누적 기록"""
         if not self.is_connected or not self.proposals_worksheet:
             return False
 

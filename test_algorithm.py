@@ -47,14 +47,14 @@ class TestTradingAlgorithm(unittest.TestCase):
         return candles
 
     def test_indicator_calculations_and_volume_adjustment(self):
-        """지표 산출 및 15:15 거래량 1.04배 보정 테스트"""
+        """지표 산출 및 15:10 거래량 1.054배 보정 테스트"""
         candles = self.generate_dummy_candles(65, vol=100000)
         df = self.screener.calculate_technical_indicators(candles, is_intraday=True)
 
         self.assertIsNotNone(df)
         self.assertEqual(len(df), 65)
-        # 당일(마지막) 캔들의 보정 거래량은 100,000 * (390 / 375) = 104,000
-        expected_adj_vol = 100000 * (390.0 / 375.0)
+        # 당일(마지막) 캔들의 보정 거래량은 100,000 * (390 / 370) ≈ 105,405
+        expected_adj_vol = 100000 * (390.0 / 370.0)
         self.assertAlmostEqual(df.iloc[-1]["adjusted_volume"], expected_adj_vol, places=1)
         # 전일까지 20일 거래량 MA (vol_ma20)가 100,000인지 확인
         self.assertEqual(df.iloc[-1]["vol_ma20"], 100000.0)

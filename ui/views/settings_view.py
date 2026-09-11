@@ -259,7 +259,7 @@ def render_settings():
             st.caption("텔레그램 알림이 꺼져 있습니다. 켜려면 위 토글을 활성화하세요.")
         f_time = st.text_input(
             "종가 매수 스크리닝 시각 (KST)",
-            value=display_settings.get("premarket_time", "15:15")
+            value=display_settings.get("premarket_time", "15:10")
         )
         st.divider()
 

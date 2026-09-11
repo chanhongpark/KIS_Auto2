@@ -107,9 +107,9 @@ class TestIndicatorsModule(unittest.TestCase):
         for col in ["ma5", "ma20", "ma60", "vol_ma20", "adjusted_volume", "rsi14", "bb_upper", "bb_lower", "atr"]:
             self.assertIn(col, df.columns)
 
-        # 15:15 intraday volume adjustment
+        # 15:10 intraday volume adjustment
         last_vol = candles[-1]["volume"]
-        expected_adj = last_vol * (390.0 / 375.0)
+        expected_adj = last_vol * (390.0 / 370.0)
         self.assertAlmostEqual(df.iloc[-1]["adjusted_volume"], expected_adj, places=1)
 
 class TestStrategyModule(unittest.TestCase):

@@ -152,7 +152,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "stop_loss_rate": -0.05,                # 손절 수익률 (-5.0%)
     "max_buy_budget_per_stock": 500000,     # 1종목당 최대 매수 한도 (원)
     "max_holding_stocks": 5,                # 최대 보유 종목 수
-    "premarket_time": "15:15",              # 종가 매수 스크리닝 시각 (KST)
+    "premarket_time": "15:10",              # 종가 매수 스크리닝 시각 (KST)
     "auto_execute_orders": False,           # 주문 완전 자동화 여부 (False: UI 원클릭 승인)
     "telegram_enabled": False,              # 텔레그램 알림 활성화 여부 (기본: OFF)
 
@@ -170,7 +170,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "investor_single_buy_score": 4,          # 외인 또는 기관 단독 순매수 가점 (+4점)
     "dynamic_universe_enabled": True,        # 당일 거래대금 상위 주도주 동적 유니버스 확장
     "dynamic_universe_top_n": 30,            # 거래대금 상위 N개 탐색
-    "use_volume_power_gate": True,           # 15:15 체결강도 안전 게이트 활성화 여부
+    "use_volume_power_gate": True,           # 15:10 체결강도 안전 게이트 활성화 여부
     "min_volume_power": 110.0,               # 최소 체결강도 기준 (110.0%)
 
     # --- 실시간 봉 반영 설정 ---

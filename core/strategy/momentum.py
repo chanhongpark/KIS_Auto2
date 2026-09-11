@@ -1,7 +1,7 @@
 """
 KIS Auto Trading - Momentum Strategy
 모멘텀/추세추종 전략 (기존 core/strategy.py 로직 이전)
-15:15 종가 매수 신호(안전 게이트/수급 게이트/점수 카테고리 캡/눌림목 가산점) 및
+15:10 종가 매수 신호(안전 게이트/수급 게이트/점수 카테고리 캡/눌림목 가산점) 및
 실시간 리스크 관리(동적 ATR 손절 / 50% 추세 분할 익절 / 20일선 트레일링 스탑 / 타임컷 12일) 평가 엔진
 """
 import logging
@@ -118,7 +118,7 @@ class MomentumStrategy(BaseStrategy):
          "default": 5, "min": 1, "max": 30, "step": 1,
          "description": "최대 동시 보유 종목 수", "category": "common"},
         {"key": "use_realtime_candle", "label": "실시간 봉 반영", "type": "toggle",
-         "default": False, "description": "실시간 현재가를 일봉에 반영 (True: 실시간 15:15 캔들 합성, False: 전일 완성봉)", "category": "common"},
+         "default": False, "description": "실시간 현재가를 일봉에 반영 (True: 실시간 15:10 캔들 합성, False: 전일 완성봉)", "category": "common"},
 
         # --- 전략 고유 설정 (전략별로 독립 저장) ---
         {"key": "momentum_ma_fast", "label": "빠른 이동평균 기간", "type": "number",
@@ -190,7 +190,7 @@ class MomentumStrategy(BaseStrategy):
          "default": 4, "min": 0, "max": 10, "step": 1,
          "description": "외인 또는 기관 단독 순매수 시 가산점", "category": "strategy"},
         {"key": "use_volume_power_gate", "label": "체결강도 안전 게이트 활성화", "type": "toggle",
-         "default": True, "description": "15:15 진입 시점 당일 실시간 체결강도 검증", "category": "strategy"},
+         "default": True, "description": "15:10 진입 시점 당일 실시간 체결강도 검증", "category": "strategy"},
         {"key": "min_volume_power", "label": "최소 체결강도 기준 (%)", "type": "number",
          "default": 110.0, "min": 50.0, "max": 200.0, "step": 5.0,
          "description": "매수 추천을 위한 최소 체결강도 (%)", "category": "strategy"},

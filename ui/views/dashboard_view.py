@@ -42,9 +42,9 @@ def render_overview_tab(api, screener, summary, holdings, proposals, holding_cod
             <div style="font-size: 0.78rem; font-weight: 700; color: #38bdf8; margin-bottom: 8px;">⏱️ 일일 5단계 운영 타임라인</div>
             <div style="display: flex; gap: 10px; font-size: 0.75rem; color: #cbd5e1; flex-wrap: wrap;">
                 <span><b>09:00</b> 시초가 손절 감시</span> ➔
-                <span><b>09:05~15:15</b> 실시간 익절/손절 감시</span> ➔
-                <span style="color: #38bdf8; font-weight: 700;"><b>15:15</b> 거래량 1.04배 종가 평가</span> ➔
-                <span><b>15:18</b> 상위종목 시장가 매수</span> ➔
+                <span><b>09:05~15:05</b> 실시간 익절/손절 감시</span> ➔
+                <span style="color: #38bdf8; font-weight: 700;"><b>15:10</b> 거래량 1.054배 종가 평가</span> ➔
+                <span><b>15:15</b> 상위종목 주문 발주</span> ➔
                 <span><b>15:30</b> 장마감 정산</span>
             </div>
         </div>
@@ -65,7 +65,7 @@ def render_overview_tab(api, screener, summary, holdings, proposals, holding_cod
 
     c_left, c_right = st.columns([1, 1])
     with c_left:
-        st.subheader("🌅 15:15 종가 매수 추천 Top")
+        st.subheader("🌅 15:10 종가 매수 추천 Top")
         buy_list = proposals.get("buy_proposals", [])
         if not buy_list:
             st.info("현재 매수 조건을 통과한 추천 종목이 없습니다. (100점 만점 기준 60점 이상 & 수급 필수 게이트 충족 필요)")
