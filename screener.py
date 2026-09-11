@@ -531,6 +531,8 @@ class StockScreener:
                 self.logger.warning(f"[{name}({code})] 종가 스크리닝 중 예외: {e}")
 
         buy_proposals.sort(key=lambda x: x["score"], reverse=True)
+        for p in buy_proposals:
+            p.setdefault("recommended_price", p.get("current_price", 0))
         top_buy_proposals = buy_proposals
 
         top_candidates = []

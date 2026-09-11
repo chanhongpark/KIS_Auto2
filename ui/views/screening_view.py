@@ -9,6 +9,21 @@ from ui.styles import render_interactive_stock_chart
 
 def _render_buy_card(api, screener, item, idx, holding_codes, key_prefix="buy", is_last_recommended=False):
     """매수 추천 종목 카드 및 주문 발주, 인터랙티브 주가 차트 렌더러"""
+    code = item.get("code")
+    rec_price = float(item.get("recommended_price") or item.get("current_price", 0))
+
+    # 페이지 로딩 시점 실시간 현재가 조회
+    live_price = rec_price
+    live_change_rate = float(item.get("change_rate", 0.0))
+    if api:
+        try:
+            rt = api.get_stock_price(code)
+            if rt.get("rt_cd") == "0" and rt.get("price", 0) > 0:
+                live_price = float(rt["price"])
+                live_change_rate = float(rt.get("prdy_ctrt", 0.0))
+        except Exception:
+            pass
+
     with st.container():
         c1, c2, c3, c4 = st.columns([2.8, 2.3, 2.3, 2.0])
         with c1:
@@ -17,7 +32,29 @@ def _render_buy_card(api, screener, item, idx, holding_codes, key_prefix="buy", 
             if is_last_recommended:
                 buy_tag = f"📌 최근추천 ({buy_tag})"
             st.markdown(f"### {buy_tag} {item['name']} <small style='color:#64748b'>({item['code']})</small>", unsafe_allow_html=True)
-            st.write(f"**현재가:** `{item['current_price']:,.0f}원` ({item.get('change_rate', 0.0):+.2f}%)")
+            
+            # 추천가 대비 현재가 변동률 계산
+            diff_pct = ((live_price - rec_price) / rec_price) * 100 if rec_price > 0 else 0.0
+            diff_color = "#ef4444" if diff_pct > 0 else ("#3b82f6" if diff_pct < 0 else "#94a3b8")
+            diff_sign = "+" if diff_pct > 0 else ""
+
+            if is_last_recommended:
+                st.markdown(
+                    f"**현재가:** `{live_price:,.0f}원` ({live_change_rate:+.2f}%) &nbsp;|&nbsp; "
+                    f"**추천가:** `{rec_price:,.0f}원` "
+                    f"<span style='color:{diff_color}; font-size:0.85rem; font-weight:600;'>(추천대비 {diff_sign}{diff_pct:.2f}%)</span>",
+                    unsafe_allow_html=True
+                )
+            else:
+                if abs(live_price - rec_price) >= 1.0:
+                    st.markdown(
+                        f"**현재가:** `{live_price:,.0f}원` ({live_change_rate:+.2f}%) &nbsp;|&nbsp; "
+                        f"**추천가:** `{rec_price:,.0f}원` "
+                        f"<span style='color:{diff_color}; font-size:0.85rem; font-weight:600;'>(추천대비 {diff_sign}{diff_pct:.2f}%)</span>",
+                        unsafe_allow_html=True
+                    )
+                else:
+                    st.write(f"**현재가:** `{live_price:,.0f}원` ({live_change_rate:+.2f}%)")
             
             strat_disp = item.get("strategy_display_name", item.get("strategy", ""))
             badges = [f"<span class='score-badge'>총점 {item['score']}점</span>"]
@@ -63,7 +100,7 @@ def _render_buy_card(api, screener, item, idx, holding_codes, key_prefix="buy", 
                     "지정가(원)",
                     min_value=100,
                     max_value=10000000,
-                    value=int(item['current_price']),
+                    value=int(live_price),
                     step=100,
                     key=f"{key_prefix}_price_{item['code']}_{idx}"
                 )
@@ -73,13 +110,13 @@ def _render_buy_card(api, screener, item, idx, holding_codes, key_prefix="buy", 
                     "LOC 상한가(원)",
                     min_value=100,
                     max_value=10000000,
-                    value=int(item['current_price']),
+                    value=int(live_price),
                     step=100,
                     key=f"{key_prefix}_price_{item['code']}_{idx}"
                 )
                 st.caption("🛡️ 종가가 상한가 이하일 때만 종가로 자동 체결")
             else:
-                target_price = int(item['current_price'])
+                target_price = int(live_price)
                 st.caption("⚡ 종가 시장가 즉시 체결")
 
         with c3:
