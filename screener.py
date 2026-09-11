@@ -508,28 +508,6 @@ class StockScreener:
             except Exception as e:
                 self.logger.warning(f"동적 유니버스 확장 중 예외: {e}")
 
-        # Step 3: 월봉 10이평 전략(monthly_trend) 활성화 시 KOSPI 100 유니버스 통합
-        active_strats = getattr(self, "strategies", None) or get_active_strategies()
-        if any(s.name == "monthly_trend" for s in active_strats):
-            try:
-                from core.universe import get_kospi100_universe
-                kospi100 = get_kospi100_universe()
-                existing_codes = {s.get("code") for s in watchlist if s.get("code")}
-                added_k100 = 0
-                for item in kospi100:
-                    code = item.get("code")
-                    name = item.get("name")
-                    if code and code not in existing_codes:
-                        watchlist.append(item)
-                        existing_codes.add(code)
-                        if hasattr(config, "STOCK_NAMES"):
-                            config.STOCK_NAMES[code] = name
-                        added_k100 += 1
-                if added_k100 > 0:
-                    self.logger.info(f"🏛️ KOSPI 100 유니버스 {added_k100}개 종목 스크리닝 유니버스 통합 (총 {len(watchlist)}종목)")
-            except Exception as e:
-                self.logger.warning(f"KOSPI 100 유니버스 로드 예외: {e}")
-
         buy_proposals = []
         unqualified_candidates = []
         for stock in watchlist:
